@@ -39,10 +39,15 @@ import (
 // mockSonarClient implémente sonarqube.Client pour les tests.
 // Seules GetStatus et ChangeAdminPassword ont une logique — les autres retournent nil.
 type mockSonarClient struct {
-	status              string
-	statusErr           error
-	changePasswordErr   error
-	changePasswordCalls int
+	status               string
+	statusErr            error
+	changePasswordErr    error
+	changePasswordCalls  int
+	installedPlugins     []sonarqube.Plugin
+	installPluginCalls   int
+	lastInstalledKey     string
+	lastInstalledVersion string
+	uninstallPluginCalls int
 }
 
 func (m *mockSonarClient) GetStatus(_ context.Context) (string, error) {
@@ -54,10 +59,18 @@ func (m *mockSonarClient) ChangeAdminPassword(_ context.Context, _, _ string) er
 }
 func (m *mockSonarClient) Restart(_ context.Context) error { return nil }
 func (m *mockSonarClient) ListInstalledPlugins(_ context.Context) ([]sonarqube.Plugin, error) {
-	return nil, nil
+	return m.installedPlugins, nil
 }
-func (m *mockSonarClient) InstallPlugin(_ context.Context, _, _ string) error    { return nil }
-func (m *mockSonarClient) UninstallPlugin(_ context.Context, _ string) error     { return nil }
+func (m *mockSonarClient) InstallPlugin(_ context.Context, key, version string) error {
+	m.installPluginCalls++
+	m.lastInstalledKey = key
+	m.lastInstalledVersion = version
+	return nil
+}
+func (m *mockSonarClient) UninstallPlugin(_ context.Context, _ string) error {
+	m.uninstallPluginCalls++
+	return nil
+}
 func (m *mockSonarClient) CreateProject(_ context.Context, _, _, _ string) error { return nil }
 func (m *mockSonarClient) GetProject(_ context.Context, _ string) (*sonarqube.Project, error) {
 	return nil, nil

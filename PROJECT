@@ -18,4 +18,13 @@ resources:
   kind: SonarQubeInstance
   path: github.com/BEIRDINH0S/sonarqube-operator/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: sonarqube.io
+  group: sonarqube
+  kind: SonarQubePlugin
+  path: github.com/BEIRDINH0S/sonarqube-operator/api/v1alpha1
+  version: v1alpha1
 version: "3"

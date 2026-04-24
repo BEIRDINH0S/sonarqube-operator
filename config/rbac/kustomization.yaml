@@ -22,6 +22,9 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the sonarqube-operator itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- sonarqubeplugin_admin_role.yaml
+- sonarqubeplugin_editor_role.yaml
+- sonarqubeplugin_viewer_role.yaml
 - sonarqubeinstance_admin_role.yaml
 - sonarqubeinstance_editor_role.yaml
 - sonarqubeinstance_viewer_role.yaml

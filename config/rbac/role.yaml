@@ -60,6 +60,7 @@ rules:
   - sonarqube.sonarqube.io
   resources:
   - sonarqubeinstances
+  - sonarqubeplugins
   verbs:
   - create
   - delete
@@ -72,12 +73,14 @@ rules:
   - sonarqube.sonarqube.io
   resources:
   - sonarqubeinstances/finalizers
+  - sonarqubeplugins/finalizers
   verbs:
   - update
 - apiGroups:
   - sonarqube.sonarqube.io
   resources:
   - sonarqubeinstances/status
+  - sonarqubeplugins/status
   verbs:
   - get
   - patch
