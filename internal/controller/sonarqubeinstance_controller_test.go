@@ -56,6 +56,14 @@ type mockSonarClient struct {
 	assignQualityGateCalls int
 	generateTokenResult    *sonarqube.Token
 	generateTokenErr       error
+	// quality gate
+	listQualityGatesResult  []sonarqube.QualityGate
+	createQualityGateResult *sonarqube.QualityGate
+	createQualityGateCalls  int
+	deleteQualityGateCalls  int
+	addConditionCalls       int
+	removeConditionCalls    int
+	setAsDefaultCalls       int
 }
 
 func (m *mockSonarClient) GetStatus(_ context.Context) (string, error) {
@@ -91,17 +99,28 @@ func (m *mockSonarClient) DeleteProject(_ context.Context, _ string) error {
 	return nil
 }
 func (m *mockSonarClient) ListQualityGates(_ context.Context) ([]sonarqube.QualityGate, error) {
-	return nil, nil
+	return m.listQualityGatesResult, nil
 }
 func (m *mockSonarClient) CreateQualityGate(_ context.Context, _ string) (*sonarqube.QualityGate, error) {
-	return nil, nil
+	m.createQualityGateCalls++
+	return m.createQualityGateResult, nil
 }
-func (m *mockSonarClient) DeleteQualityGate(_ context.Context, _ string) error { return nil }
+func (m *mockSonarClient) DeleteQualityGate(_ context.Context, _ string) error {
+	m.deleteQualityGateCalls++
+	return nil
+}
 func (m *mockSonarClient) AddCondition(_ context.Context, _ int64, _, _, _ string) (*sonarqube.Condition, error) {
-	return nil, nil
+	m.addConditionCalls++
+	return &sonarqube.Condition{}, nil
 }
-func (m *mockSonarClient) RemoveCondition(_ context.Context, _ int64) error { return nil }
-func (m *mockSonarClient) SetAsDefault(_ context.Context, _ string) error   { return nil }
+func (m *mockSonarClient) RemoveCondition(_ context.Context, _ int64) error {
+	m.removeConditionCalls++
+	return nil
+}
+func (m *mockSonarClient) SetAsDefault(_ context.Context, _ string) error {
+	m.setAsDefaultCalls++
+	return nil
+}
 func (m *mockSonarClient) AssignQualityGate(_ context.Context, _, _ string) error {
 	m.assignQualityGateCalls++
 	return nil

@@ -55,6 +55,7 @@ rules:
   - sonarqubeinstances
   - sonarqubeplugins
   - sonarqubeprojects
+  - sonarqubequalitygates
   verbs:
   - create
   - delete
@@ -69,6 +70,7 @@ rules:
   - sonarqubeinstances/finalizers
   - sonarqubeplugins/finalizers
   - sonarqubeprojects/finalizers
+  - sonarqubequalitygates/finalizers
   verbs:
   - update
 - apiGroups:
@@ -77,6 +79,7 @@ rules:
   - sonarqubeinstances/status
   - sonarqubeplugins/status
   - sonarqubeprojects/status
+  - sonarqubequalitygates/status
   verbs:
   - get
   - patch
