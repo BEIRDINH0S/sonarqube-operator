@@ -113,6 +113,11 @@ type SonarQubeInstanceStatus struct {
 	// +optional
 	URL string `json:"url,omitempty"`
 
+	// adminTokenSecretRef is the name of the Secret containing the admin Bearer token (key: token).
+	// Set once the admin password has been initialized.
+	// +optional
+	AdminTokenSecretRef string `json:"adminTokenSecretRef,omitempty"`
+
 	// conditions represent the detailed state of the SonarQubeInstance.
 	// +listType=map
 	// +listMapKey=type

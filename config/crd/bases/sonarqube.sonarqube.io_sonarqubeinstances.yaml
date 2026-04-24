@@ -192,6 +192,11 @@ spec:
           status:
             description: SonarQubeInstanceStatus defines the observed state of SonarQubeInstance.
             properties:
+              adminTokenSecretRef:
+                description: |-
+                  adminTokenSecretRef is the name of the Secret containing the admin Bearer token (key: token).
+                  Set once the admin password has been initialized.
+                type: string
               conditions:
                 description: conditions represent the detailed state of the SonarQubeInstance.
                 items:

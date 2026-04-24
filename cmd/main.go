@@ -186,6 +186,9 @@ func main() {
 		NewSonarClient: func(baseURL, token string) sonarqube.Client {
 			return sonarqube.NewClient(baseURL, token)
 		},
+		NewSonarClientWithPassword: func(baseURL, username, password string) sonarqube.Client {
+			return sonarqube.NewClientWithPassword(baseURL, username, password)
+		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "SonarQubeInstance")
 		os.Exit(1)

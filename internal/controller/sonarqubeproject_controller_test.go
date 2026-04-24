@@ -109,8 +109,8 @@ var _ = Describe("SonarQubeProject Controller", func() {
 		newReadyInstance(ctx, instanceName)
 		Expect(k8sClient.Create(ctx, newTestProject(projectName, instanceName, "proj-create-key"))).To(Succeed())
 
-		// GetProject retourne une erreur → le projet n'existe pas → CreateProject attendu
-		mock := &mockSonarClient{getProjectErr: fmt.Errorf("not found")}
+		// GetProject retourne ErrNotFound → le projet n'existe pas → CreateProject attendu
+		mock := &mockSonarClient{getProjectErr: fmt.Errorf("project: %w", sonarqube.ErrNotFound)}
 		_, err := newProjectReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
 		Expect(err).NotTo(HaveOccurred())
 

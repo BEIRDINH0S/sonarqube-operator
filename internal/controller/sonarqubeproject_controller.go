@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -78,7 +79,14 @@ func (r *SonarQubeProjectReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
 
-	sonarClient := r.NewSonarClient(instance.Status.URL, "")
+	token, err := getInstanceAdminToken(ctx, r.Client, instance)
+	if err != nil {
+		log.Info("Admin token not yet available, requeueing", "error", err.Error())
+		project.Status.Phase = "Pending"
+		_ = r.Status().Update(ctx, project)
+		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
+	}
+	sonarClient := r.NewSonarClient(instance.Status.URL, token)
 
 	if !project.DeletionTimestamp.IsZero() {
 		return r.handleDeletion(ctx, project, sonarClient)
@@ -98,6 +106,10 @@ func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, proje
 	// Vérifier si le projet existe déjà dans SonarQube
 	existing, err := sonarClient.GetProject(ctx, project.Spec.Key)
 	if err != nil {
+		if !stderrors.Is(err, sonarqube.ErrNotFound) {
+			// Vraie erreur réseau ou auth — on ne crée pas à l'aveugle
+			return ctrl.Result{}, fmt.Errorf("checking project: %w", err)
+		}
 		// Projet absent → créer
 		if err := sonarClient.CreateProject(ctx, project.Spec.Key, project.Spec.Name, project.Spec.Visibility); err != nil {
 			project.Status.Phase = "Failed"
@@ -107,10 +119,9 @@ func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, proje
 		}
 		r.Recorder.Event(project, corev1.EventTypeNormal, "Created", fmt.Sprintf("Project %q created", project.Spec.Key))
 	} else if existing.Visibility != project.Spec.Visibility {
-		// Le projet existe mais la visibilité a changé — SonarQube n'a pas d'endpoint
-		// update_visibility dans toutes les versions, on logue simplement
-		log := logf.FromContext(ctx)
-		log.Info("Visibility drift detected but update not yet implemented", "key", project.Spec.Key)
+		if err := sonarClient.UpdateProjectVisibility(ctx, project.Spec.Key, project.Spec.Visibility); err != nil {
+			r.Recorder.Event(project, corev1.EventTypeWarning, "VisibilityUpdateFailed", err.Error())
+		}
 	}
 
 	// Associer le Quality Gate si défini

@@ -19,6 +19,7 @@ package sonarqube
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,6 +27,10 @@ import (
 	"strings"
 	"time"
 )
+
+// ErrNotFound est retourné quand une ressource n'existe pas dans SonarQube.
+// Utiliser errors.Is(err, ErrNotFound) pour distinguer "absent" d'une vraie erreur réseau.
+var ErrNotFound = errors.New("not found")
 
 // --- Types métier ---
 
@@ -84,6 +89,7 @@ type Client interface {
 	CreateProject(ctx context.Context, key, name, visibility string) error
 	GetProject(ctx context.Context, key string) (*Project, error)
 	DeleteProject(ctx context.Context, key string) error
+	UpdateProjectVisibility(ctx context.Context, key, visibility string) error
 
 	// Quality Gates
 	ListQualityGates(ctx context.Context) ([]QualityGate, error)
@@ -104,17 +110,31 @@ type Client interface {
 type httpClient struct {
 	baseURL    string
 	token      string
+	username   string
+	password   string
 	httpClient *http.Client
 }
 
-// NewClient crée un client HTTP pour l'API SonarQube.
-// token est un token d'admin Bearer. Laisser vide pour les appels sans auth (ex: GetStatus).
+// NewClient crée un client HTTP pour l'API SonarQube authentifié par Bearer token.
 func NewClient(baseURL, token string) Client {
 	return &httpClient{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 30 * time.Second,
+		},
+	}
+}
+
+// NewClientWithPassword crée un client authentifié en Basic Auth (username:password).
+// Réservé au bootstrap admin : une fois le token généré, utiliser NewClient.
+func NewClientWithPassword(baseURL, username, password string) Client {
+	return &httpClient{
+		baseURL:  strings.TrimRight(baseURL, "/"),
+		username: username,
+		password: password,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
 		},
 	}
 }
@@ -157,6 +177,8 @@ func (c *httpClient) do(ctx context.Context, method, path string, params url.Val
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
+	} else if c.username != "" {
+		req.SetBasicAuth(c.username, c.password)
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -282,13 +304,21 @@ func (c *httpClient) GetProject(ctx context.Context, key string) (*Project, erro
 		return nil, err
 	}
 	if len(result.Components) == 0 {
-		return nil, fmt.Errorf("project %q not found", key)
+		return nil, fmt.Errorf("project %q: %w", key, ErrNotFound)
 	}
 	return &result.Components[0], nil
 }
 
 func (c *httpClient) DeleteProject(ctx context.Context, key string) error {
 	_, err := c.do(ctx, http.MethodPost, "/api/projects/delete", url.Values{"project": {key}})
+	return err
+}
+
+func (c *httpClient) UpdateProjectVisibility(ctx context.Context, key, visibility string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/projects/update_visibility", url.Values{
+		"project":    {key},
+		"visibility": {visibility},
+	})
 	return err
 }
 
@@ -370,7 +400,6 @@ func (c *httpClient) SetAsDefault(ctx context.Context, name string) error {
 func (c *httpClient) AssignQualityGate(ctx context.Context, projectKey, gateName string) error {
 	_, err := c.do(ctx, http.MethodPost, "/api/qualitygates/select", url.Values{
 		"projectKey": {projectKey},
-		"gateId":     {},
 		"gateName":   {gateName},
 	})
 	return err

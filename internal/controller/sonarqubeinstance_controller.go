@@ -41,17 +41,17 @@ import (
 )
 
 const (
-	annotationAdminInitialized = "sonarqube.io/admin-initialized"
-	defaultAdminPassword       = "admin"
-	requeueAfterHealthCheck    = 30 * time.Second
+	defaultAdminPassword    = "admin"
+	requeueAfterHealthCheck = 30 * time.Second
 )
 
 // SonarQubeInstanceReconciler reconciles a SonarQubeInstance object
 type SonarQubeInstanceReconciler struct {
 	client.Client
-	Scheme         *runtime.Scheme
-	Recorder       record.EventRecorder
-	NewSonarClient func(baseURL, token string) sonarqube.Client
+	Scheme                     *runtime.Scheme
+	Recorder                   record.EventRecorder
+	NewSonarClient             func(baseURL, token string) sonarqube.Client
+	NewSonarClientWithPassword func(baseURL, username, password string) sonarqube.Client
 }
 
 // +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubeinstances,verbs=get;list;watch;create;update;patch;delete
@@ -60,7 +60,7 @@ type SonarQubeInstanceReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 
@@ -109,9 +109,9 @@ func (r *SonarQubeInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 func (r *SonarQubeInstanceReconciler) reconcileHealth(ctx context.Context, instance *sonarqubev1alpha1.SonarQubeInstance, serviceURL string) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	sonarClient := r.NewSonarClient(serviceURL, "")
-
-	status, err := sonarClient.GetStatus(ctx)
+	// GetStatus est un endpoint public — pas besoin de token
+	unauthClient := r.NewSonarClient(serviceURL, "")
+	status, err := unauthClient.GetStatus(ctx)
 	if err != nil {
 		log.Info("SonarQube not reachable yet, requeueing", "error", err.Error())
 		r.Recorder.Event(instance, corev1.EventTypeNormal, "Waiting", "Waiting for SonarQube to be reachable")
@@ -126,12 +126,10 @@ func (r *SonarQubeInstanceReconciler) reconcileHealth(ctx context.Context, insta
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
 
-	if instance.Annotations[annotationAdminInitialized] != "true" {
-		if err := r.initializeAdminPassword(ctx, instance, sonarClient); err != nil {
-			log.Error(err, "Failed to initialize admin password, will retry")
-			instance.Status.Phase = "Progressing"
-			return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
-		}
+	if err := r.initializeAdmin(ctx, instance, serviceURL); err != nil {
+		log.Error(err, "Failed to initialize admin, will retry")
+		instance.Status.Phase = "Progressing"
+		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
 
 	instance.Status.Phase = "Ready"
@@ -139,35 +137,76 @@ func (r *SonarQubeInstanceReconciler) reconcileHealth(ctx context.Context, insta
 	return ctrl.Result{}, nil
 }
 
-// initializeAdminPassword change le mot de passe admin par défaut au premier démarrage
-// et pose une annotation pour ne pas recommencer au prochain cycle.
-func (r *SonarQubeInstanceReconciler) initializeAdminPassword(ctx context.Context, instance *sonarqubev1alpha1.SonarQubeInstance, sonarClient sonarqube.Client) error {
-	secret := &corev1.Secret{}
+// adminTokenSecretName retourne le nom du Secret qui stocke le token Bearer de l'admin.
+func adminTokenSecretName(instance *sonarqubev1alpha1.SonarQubeInstance) string {
+	return instance.Name + "-admin-token"
+}
+
+// initializeAdmin gère l'initialisation idempotente du compte admin :
+// - si le Secret token existe déjà → rien à faire
+// - sinon : vérifie quel password fonctionne, change si nécessaire, génère un token Bearer
+func (r *SonarQubeInstanceReconciler) initializeAdmin(ctx context.Context, instance *sonarqubev1alpha1.SonarQubeInstance, serviceURL string) error {
+	tokenSecretName := adminTokenSecretName(instance)
+
+	// Si le Secret token existe déjà → admin déjà initialisé, rien à faire
+	existing := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: tokenSecretName, Namespace: instance.Namespace}, existing); err == nil {
+		instance.Status.AdminTokenSecretRef = tokenSecretName
+		return nil
+	}
+
+	// Lire le password cible depuis le Secret utilisateur
+	adminSecret := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{
 		Name:      instance.Spec.AdminSecretRef,
 		Namespace: instance.Namespace,
-	}, secret); err != nil {
+	}, adminSecret); err != nil {
 		return fmt.Errorf("getting admin secret: %w", err)
 	}
-
-	newPassword := string(secret.Data["password"])
+	newPassword := string(adminSecret.Data["password"])
 	if newPassword == "" {
 		return fmt.Errorf("admin secret %q missing key 'password'", instance.Spec.AdminSecretRef)
 	}
 
-	if err := sonarClient.ChangeAdminPassword(ctx, defaultAdminPassword, newPassword); err != nil {
-		return fmt.Errorf("changing admin password: %w", err)
+	// Essayer d'abord avec le nouveau password (cas : password déjà changé, mais token Secret manquant)
+	clientNewPass := r.NewSonarClientWithPassword(serviceURL, "admin", newPassword)
+	if _, err := clientNewPass.GetStatus(ctx); err != nil {
+		// Nouveau password incorrect → le password n'a pas encore été changé → on le change
+		clientDefault := r.NewSonarClientWithPassword(serviceURL, "admin", defaultAdminPassword)
+		if err := clientDefault.ChangeAdminPassword(ctx, defaultAdminPassword, newPassword); err != nil {
+			return fmt.Errorf("changing admin password: %w", err)
+		}
+		// Recréer le client avec le nouveau password maintenant valide
+		clientNewPass = r.NewSonarClientWithPassword(serviceURL, "admin", newPassword)
 	}
 
-	if instance.Annotations == nil {
-		instance.Annotations = map[string]string{}
-	}
-	instance.Annotations[annotationAdminInitialized] = "true"
-	if err := r.Update(ctx, instance); err != nil {
-		return fmt.Errorf("saving initialized annotation: %w", err)
+	// Générer un token Bearer pour l'opérateur
+	tokenName := instance.Name + "-operator"
+	token, err := clientNewPass.GenerateToken(ctx, tokenName, "USER_TOKEN", "")
+	if err != nil {
+		return fmt.Errorf("generating admin token: %w", err)
 	}
 
-	r.Recorder.Event(instance, corev1.EventTypeNormal, "AdminInitialized", "Admin password initialized from secret")
+	// Stocker le token dans un Secret owned par l'instance
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      tokenSecretName,
+			Namespace: instance.Namespace,
+		},
+		Data: map[string][]byte{
+			"token": []byte(token.Token),
+		},
+	}
+	if err := controllerutil.SetControllerReference(instance, tokenSecret, r.Scheme); err != nil {
+		return err
+	}
+	if err := r.Create(ctx, tokenSecret); err != nil {
+		return fmt.Errorf("creating admin token secret: %w", err)
+	}
+
+	instance.Status.AdminTokenSecretRef = tokenSecretName
+	r.Recorder.Event(instance, corev1.EventTypeNormal, "AdminInitialized",
+		fmt.Sprintf("Admin token stored in Secret %q", tokenSecretName))
 	return nil
 }
 
@@ -389,6 +428,7 @@ func (r *SonarQubeInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.Service{}).
 		Owns(&networkingv1.Ingress{}).
+		Owns(&corev1.Secret{}).
 		Named("sonarqubeinstance").
 		Complete(r)
 }

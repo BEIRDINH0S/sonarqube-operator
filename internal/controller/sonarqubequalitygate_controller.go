@@ -75,7 +75,14 @@ func (r *SonarQubeQualityGateReconciler) Reconcile(ctx context.Context, req ctrl
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
 
-	sonarClient := r.NewSonarClient(instance.Status.URL, "")
+	token, err := getInstanceAdminToken(ctx, r.Client, instance)
+	if err != nil {
+		log.Info("Admin token not yet available, requeueing", "error", err.Error())
+		gate.Status.Phase = "Pending"
+		_ = r.Status().Update(ctx, gate)
+		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
+	}
+	sonarClient := r.NewSonarClient(instance.Status.URL, token)
 
 	if !gate.DeletionTimestamp.IsZero() {
 		return r.handleDeletion(ctx, gate, sonarClient)

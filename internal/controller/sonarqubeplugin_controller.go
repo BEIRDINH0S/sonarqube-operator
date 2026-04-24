@@ -80,7 +80,14 @@ func (r *SonarQubePluginReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
 
-	sonarClient := r.NewSonarClient(instance.Status.URL, "")
+	token, err := getInstanceAdminToken(ctx, r.Client, instance)
+	if err != nil {
+		log.Info("Admin token not yet available, requeueing", "error", err.Error())
+		plugin.Status.Phase = "Pending"
+		_ = r.Status().Update(ctx, plugin)
+		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
+	}
+	sonarClient := r.NewSonarClient(instance.Status.URL, token)
 
 	// Gérer la suppression via finalizer
 	if !plugin.DeletionTimestamp.IsZero() {

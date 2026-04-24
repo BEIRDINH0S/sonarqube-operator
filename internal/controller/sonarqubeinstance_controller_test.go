@@ -98,6 +98,7 @@ func (m *mockSonarClient) DeleteProject(_ context.Context, _ string) error {
 	m.deleteProjectCalls++
 	return nil
 }
+func (m *mockSonarClient) UpdateProjectVisibility(_ context.Context, _, _ string) error { return nil }
 func (m *mockSonarClient) ListQualityGates(_ context.Context) ([]sonarqube.QualityGate, error) {
 	return m.listQualityGatesResult, nil
 }
@@ -137,6 +138,9 @@ func newTestReconciler(mock *mockSonarClient) *SonarQubeInstanceReconciler {
 		Scheme:   k8sClient.Scheme(),
 		Recorder: record.NewFakeRecorder(10),
 		NewSonarClient: func(_, _ string) sonarqube.Client {
+			return mock
+		},
+		NewSonarClientWithPassword: func(_, _, _ string) sonarqube.Client {
 			return mock
 		},
 	}
@@ -306,14 +310,22 @@ var _ = Describe("SonarQubeInstance Controller (envtest)", func() {
 		Expect(result.RequeueAfter).To(Equal(requeueAfterHealthCheck))
 	})
 
-	It("passe en Ready quand SonarQube répond UP et le mot de passe est déjà initialisé", func() {
+	It("passe en Ready quand le token admin Secret existe déjà", func() {
 		name := "test-ready"
 		nn := types.NamespacedName{Name: name, Namespace: "default"}
 		defer deleteInstance(name)
 
-		instance := newTestInstance(name)
-		instance.Annotations = map[string]string{annotationAdminInitialized: "true"}
-		Expect(k8sClient.Create(ctx, instance)).To(Succeed())
+		Expect(k8sClient.Create(ctx, newTestInstance(name))).To(Succeed())
+
+		// Simuler un admin déjà initialisé : créer le Secret token d'admin
+		tokenSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: name + "-admin-token", Namespace: "default"},
+			Data:       map[string][]byte{"token": []byte("sqa_existing_token")},
+		}
+		Expect(k8sClient.Create(ctx, tokenSecret)).To(Succeed())
+		defer func() {
+			_ = k8sClient.Delete(ctx, tokenSecret)
+		}()
 
 		mock := &mockSonarClient{status: "UP"}
 		_, err := newTestReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
@@ -323,9 +335,10 @@ var _ = Describe("SonarQubeInstance Controller (envtest)", func() {
 		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 		Expect(updated.Status.Phase).To(Equal("Ready"))
 		Expect(updated.Status.Version).To(Equal("10.3"))
+		Expect(updated.Status.AdminTokenSecretRef).To(Equal(name + "-admin-token"))
 	})
 
-	It("change le mot de passe admin au premier démarrage quand SonarQube est UP", func() {
+	It("crée le Secret admin token au premier démarrage quand SonarQube est UP", func() {
 		name := "test-firstboot"
 		nn := types.NamespacedName{Name: name, Namespace: "default"}
 		defer deleteInstance(name)
@@ -333,15 +346,22 @@ var _ = Describe("SonarQubeInstance Controller (envtest)", func() {
 
 		Expect(k8sClient.Create(ctx, newTestInstance(name))).To(Succeed())
 
-		mock := &mockSonarClient{status: "UP"}
+		// Le mock retourne UP et un token valide lors de la génération
+		mock := &mockSonarClient{
+			status:              "UP",
+			generateTokenResult: &sonarqube.Token{Token: "sqa_generated_abc123"},
+		}
 		_, err := newTestReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(mock.changePasswordCalls).To(Equal(1))
+		// Le Secret admin token doit avoir été créé
+		tokenSecret := &corev1.Secret{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name + "-admin-token", Namespace: "default"}, tokenSecret)).To(Succeed())
+		Expect(string(tokenSecret.Data["token"])).To(Equal("sqa_generated_abc123"))
 
 		updated := &sonarqubev1alpha1.SonarQubeInstance{}
 		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
-		Expect(updated.Annotations[annotationAdminInitialized]).To(Equal("true"))
+		Expect(updated.Status.AdminTokenSecretRef).To(Equal(name + "-admin-token"))
 		Expect(updated.Status.Phase).To(Equal("Ready"))
 	})
 })

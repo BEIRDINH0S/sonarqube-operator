@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -46,8 +47,18 @@ func newPluginReconciler(mock *mockSonarClient) *SonarQubePluginReconciler {
 func newReadyInstance(ctx context.Context, name string) {
 	instance := newTestInstance(name)
 	_ = k8sClient.Create(ctx, instance)
+
+	// Créer le Secret admin token requis par les contrôleurs enfants
+	tokenSecretName := name + "-admin-token"
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: tokenSecretName, Namespace: "default"},
+		Data:       map[string][]byte{"token": []byte("sqa_test_token")},
+	}
+	_ = k8sClient.Create(ctx, tokenSecret)
+
 	instance.Status.Phase = "Ready"
 	instance.Status.URL = "http://" + name + ".default:9000"
+	instance.Status.AdminTokenSecretRef = tokenSecretName
 	_ = k8sClient.Status().Update(ctx, instance)
 }
 
