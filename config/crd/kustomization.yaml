@@ -4,6 +4,7 @@
 resources:
 - bases/sonarqube.sonarqube.io_sonarqubeinstances.yaml
 - bases/sonarqube.sonarqube.io_sonarqubeplugins.yaml
+- bases/sonarqube.sonarqube.io_sonarqubeprojects.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

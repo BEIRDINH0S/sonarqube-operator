@@ -1,0 +1,208 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"fmt"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	sonarqubev1alpha1 "github.com/BEIRDINH0S/sonarqube-operator/api/v1alpha1"
+	"github.com/BEIRDINH0S/sonarqube-operator/internal/sonarqube"
+)
+
+const projectFinalizer = "sonarqube.io/project-finalizer"
+
+// SonarQubeProjectReconciler reconciles a SonarQubeProject object
+type SonarQubeProjectReconciler struct {
+	client.Client
+	Scheme         *runtime.Scheme
+	Recorder       record.EventRecorder
+	NewSonarClient func(baseURL, token string) sonarqube.Client
+}
+
+// +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubeprojects,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubeprojects/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubeprojects/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
+
+func (r *SonarQubeProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	project := &sonarqubev1alpha1.SonarQubeProject{}
+	if err := r.Get(ctx, req.NamespacedName, project); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	instanceNamespace := project.Spec.InstanceRef.Namespace
+	if instanceNamespace == "" {
+		instanceNamespace = project.Namespace
+	}
+
+	instance := &sonarqubev1alpha1.SonarQubeInstance{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      project.Spec.InstanceRef.Name,
+		Namespace: instanceNamespace,
+	}, instance); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	if instance.Status.Phase != "Ready" {
+		log.Info("Instance not ready, requeueing", "instance", instance.Name)
+		project.Status.Phase = "Pending"
+		_ = r.Status().Update(ctx, project)
+		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
+	}
+
+	sonarClient := r.NewSonarClient(instance.Status.URL, "")
+
+	if !project.DeletionTimestamp.IsZero() {
+		return r.handleDeletion(ctx, project, sonarClient)
+	}
+
+	if !controllerutil.ContainsFinalizer(project, projectFinalizer) {
+		controllerutil.AddFinalizer(project, projectFinalizer)
+		if err := r.Update(ctx, project); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	return r.reconcileProject(ctx, project, instance, sonarClient)
+}
+
+func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, project *sonarqubev1alpha1.SonarQubeProject, instance *sonarqubev1alpha1.SonarQubeInstance, sonarClient sonarqube.Client) (ctrl.Result, error) {
+	// Vérifier si le projet existe déjà dans SonarQube
+	existing, err := sonarClient.GetProject(ctx, project.Spec.Key)
+	if err != nil {
+		// Projet absent → créer
+		if err := sonarClient.CreateProject(ctx, project.Spec.Key, project.Spec.Name, project.Spec.Visibility); err != nil {
+			project.Status.Phase = "Failed"
+			_ = r.Status().Update(ctx, project)
+			r.Recorder.Event(project, corev1.EventTypeWarning, "CreateFailed", err.Error())
+			return ctrl.Result{}, fmt.Errorf("creating project: %w", err)
+		}
+		r.Recorder.Event(project, corev1.EventTypeNormal, "Created", fmt.Sprintf("Project %q created", project.Spec.Key))
+	} else if existing.Visibility != project.Spec.Visibility {
+		// Le projet existe mais la visibilité a changé — SonarQube n'a pas d'endpoint
+		// update_visibility dans toutes les versions, on logue simplement
+		log := logf.FromContext(ctx)
+		log.Info("Visibility drift detected but update not yet implemented", "key", project.Spec.Key)
+	}
+
+	// Associer le Quality Gate si défini
+	if project.Spec.QualityGateRef != "" {
+		if err := sonarClient.AssignQualityGate(ctx, project.Spec.Key, project.Spec.QualityGateRef); err != nil {
+			r.Recorder.Event(project, corev1.EventTypeWarning, "QualityGateFailed", err.Error())
+		}
+	}
+
+	// Gérer le token CI
+	if project.Spec.CIToken.Enabled {
+		if err := r.reconcileCIToken(ctx, project, instance, sonarClient); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	project.Status.Phase = "Ready"
+	project.Status.ProjectURL = fmt.Sprintf("%s/dashboard?id=%s", instance.Status.URL, project.Spec.Key)
+	return ctrl.Result{}, r.Status().Update(ctx, project)
+}
+
+// reconcileCIToken génère un token CI et le stocke dans un Secret Kubernetes.
+// Si le Secret existe déjà, il n'est pas regénéré (le token SonarQube n'est visible qu'à la création).
+// Si le Secret est absent, un nouveau token est généré.
+func (r *SonarQubeProjectReconciler) reconcileCIToken(ctx context.Context, project *sonarqubev1alpha1.SonarQubeProject, instance *sonarqubev1alpha1.SonarQubeInstance, sonarClient sonarqube.Client) error {
+	secretName := project.Spec.CIToken.SecretName
+	if secretName == "" {
+		secretName = project.Name + "-ci-token"
+	}
+
+	secret := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: project.Namespace}, secret)
+	if err == nil {
+		// Secret déjà présent → rien à faire
+		project.Status.TokenSecretRef = secretName
+		return nil
+	}
+	if !errors.IsNotFound(err) {
+		return fmt.Errorf("checking CI token secret: %w", err)
+	}
+
+	// Secret absent → générer un nouveau token dans SonarQube
+	tokenName := fmt.Sprintf("%s-ci-%s", project.Spec.Key, instance.Name)
+	token, err := sonarClient.GenerateToken(ctx, tokenName, "PROJECT_ANALYSIS_TOKEN", project.Spec.Key)
+	if err != nil {
+		return fmt.Errorf("generating CI token: %w", err)
+	}
+
+	// Stocker le token dans un Secret Kubernetes
+	newSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: project.Namespace,
+		},
+		Data: map[string][]byte{
+			"token": []byte(token.Token),
+		},
+	}
+	if err := controllerutil.SetControllerReference(project, newSecret, r.Scheme); err != nil {
+		return err
+	}
+	if err := r.Create(ctx, newSecret); err != nil {
+		return fmt.Errorf("creating CI token secret: %w", err)
+	}
+
+	project.Status.TokenSecretRef = secretName
+	r.Recorder.Event(project, corev1.EventTypeNormal, "TokenCreated",
+		fmt.Sprintf("CI token stored in Secret %q", secretName))
+	return nil
+}
+
+func (r *SonarQubeProjectReconciler) handleDeletion(ctx context.Context, project *sonarqubev1alpha1.SonarQubeProject, sonarClient sonarqube.Client) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(project, projectFinalizer) {
+		return ctrl.Result{}, nil
+	}
+
+	if err := sonarClient.DeleteProject(ctx, project.Spec.Key); err != nil {
+		r.Recorder.Event(project, corev1.EventTypeWarning, "DeleteFailed", err.Error())
+		return ctrl.Result{}, fmt.Errorf("deleting project on deletion: %w", err)
+	}
+
+	r.Recorder.Event(project, corev1.EventTypeNormal, "Deleted",
+		fmt.Sprintf("Project %q deleted from SonarQube", project.Spec.Key))
+	controllerutil.RemoveFinalizer(project, projectFinalizer)
+	return ctrl.Result{}, r.Update(ctx, project)
+}
+
+// SetupWithManager sets up the controller with the Manager.
+func (r *SonarQubeProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&sonarqubev1alpha1.SonarQubeProject{}).
+		Owns(&corev1.Secret{}).
+		Named("sonarqubeproject").
+		Complete(r)
+}

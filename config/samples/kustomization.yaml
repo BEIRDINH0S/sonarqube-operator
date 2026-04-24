@@ -2,4 +2,5 @@
 resources:
 - sonarqube_v1alpha1_sonarqubeinstance.yaml
 - sonarqube_v1alpha1_sonarqubeplugin.yaml
+- sonarqube_v1alpha1_sonarqubeproject.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

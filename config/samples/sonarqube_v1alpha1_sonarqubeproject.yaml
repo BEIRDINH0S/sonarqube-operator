@@ -1,0 +1,9 @@
+apiVersion: sonarqube.sonarqube.io/v1alpha1
+kind: SonarQubeProject
+metadata:
+  labels:
+    app.kubernetes.io/name: sonarqube-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: sonarqubeproject-sample
+spec:
+  # TODO(user): Add fields here
