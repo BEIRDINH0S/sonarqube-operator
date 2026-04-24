@@ -20,71 +20,193 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
 
-// Client définit les opérations que l'opérateur effectue sur l'API SonarQube.
-// C'est une interface — ça permet d'injecter un mock dans les tests.
-type Client interface {
-	GetStatus(ctx context.Context) (string, error)
-	ChangeAdminPassword(ctx context.Context, currentPassword, newPassword string) error
+// --- Types métier ---
+
+// Plugin représente un plugin SonarQube installé.
+type Plugin struct {
+	Key     string `json:"key"`
+	Name    string `json:"name"`
+	Version string `json:"version"`
 }
+
+// Project représente un projet SonarQube.
+type Project struct {
+	Key        string `json:"key"`
+	Name       string `json:"name"`
+	Visibility string `json:"visibility"`
+}
+
+// QualityGate représente un quality gate SonarQube.
+type QualityGate struct {
+	ID         int64       `json:"id"`
+	Name       string      `json:"name"`
+	IsDefault  bool        `json:"isDefault"`
+	Conditions []Condition `json:"conditions"`
+}
+
+// Condition représente une condition d'un quality gate.
+type Condition struct {
+	ID     int64  `json:"id"`
+	Metric string `json:"metric"`
+	Op     string `json:"op"`
+	Error  string `json:"error"`
+}
+
+// Token représente un token d'accès SonarQube.
+type Token struct {
+	Name  string `json:"name"`
+	Token string `json:"token"`
+}
+
+// --- Interface ---
+
+// Client définit toutes les opérations que l'opérateur effectue sur l'API SonarQube.
+// C'est une interface pour pouvoir injecter un mock dans les tests.
+type Client interface {
+	// Système
+	GetStatus(ctx context.Context) (string, error)
+	Restart(ctx context.Context) error
+	ChangeAdminPassword(ctx context.Context, currentPassword, newPassword string) error
+
+	// Plugins
+	ListInstalledPlugins(ctx context.Context) ([]Plugin, error)
+	InstallPlugin(ctx context.Context, key, version string) error
+	UninstallPlugin(ctx context.Context, key string) error
+
+	// Projets
+	CreateProject(ctx context.Context, key, name, visibility string) error
+	GetProject(ctx context.Context, key string) (*Project, error)
+	DeleteProject(ctx context.Context, key string) error
+
+	// Quality Gates
+	ListQualityGates(ctx context.Context) ([]QualityGate, error)
+	CreateQualityGate(ctx context.Context, name string) (*QualityGate, error)
+	DeleteQualityGate(ctx context.Context, name string) error
+	AddCondition(ctx context.Context, gateID int64, metric, op, value string) (*Condition, error)
+	RemoveCondition(ctx context.Context, conditionID int64) error
+	SetAsDefault(ctx context.Context, name string) error
+	AssignQualityGate(ctx context.Context, projectKey, gateName string) error
+
+	// Tokens
+	GenerateToken(ctx context.Context, name, tokenType, projectKey string) (*Token, error)
+	RevokeToken(ctx context.Context, name string) error
+}
+
+// --- Implémentation HTTP ---
 
 type httpClient struct {
 	baseURL    string
+	token      string
 	httpClient *http.Client
 }
 
 // NewClient crée un client HTTP pour l'API SonarQube.
-func NewClient(baseURL string) Client {
+// token est un token d'admin Bearer. Laisser vide pour les appels sans auth (ex: GetStatus).
+func NewClient(baseURL, token string) Client {
 	return &httpClient{
 		baseURL: strings.TrimRight(baseURL, "/"),
+		token:   token,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
 	}
 }
 
-type statusResponse struct {
-	Status string `json:"status"`
+// apiError représente la structure d'erreur retournée par l'API SonarQube.
+// SonarQube retourne toujours les erreurs dans le body JSON, pas seulement via le status HTTP.
+type apiError struct {
+	Errors []struct {
+		Msg string `json:"msg"`
+	} `json:"errors"`
 }
 
-// GetStatus appelle /api/system/status (sans auth) et retourne l'état de SonarQube.
-// Valeurs possibles : "STARTING", "UP", "RESTARTING", "DB_MIGRATION_NEEDED", "DB_MIGRATION_RUNNING", "DOWN".
-func (c *httpClient) GetStatus(ctx context.Context) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/system/status", nil)
+func (e *apiError) Error() string {
+	msgs := make([]string, len(e.Errors))
+	for i, err := range e.Errors {
+		msgs[i] = err.Msg
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// do exécute une requête HTTP et retourne le body.
+// Gère l'auth Bearer et parse les erreurs SonarQube.
+func (c *httpClient) do(ctx context.Context, method, path string, params url.Values) ([]byte, error) {
+	var bodyReader io.Reader
+	fullURL := c.baseURL + path
+
+	if method == http.MethodPost && params != nil {
+		bodyReader = strings.NewReader(params.Encode())
+	} else if method == http.MethodGet && params != nil {
+		fullURL += "?" + params.Encode()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, bodyReader)
 	if err != nil {
-		return "", err
+		return nil, err
+	}
+
+	if method == http.MethodPost && params != nil {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
 	}
 
+	if resp.StatusCode >= 400 {
+		var apiErr apiError
+		if jsonErr := json.Unmarshal(body, &apiErr); jsonErr == nil && len(apiErr.Errors) > 0 {
+			return nil, &apiErr
+		}
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	return body, nil
+}
+
+// --- Système ---
+
+type statusResponse struct {
+	Status string `json:"status"`
+}
+
+func (c *httpClient) GetStatus(ctx context.Context) (string, error) {
+	body, err := c.do(ctx, http.MethodGet, "/api/system/status", nil)
+	if err != nil {
+		return "", err
+	}
 	var result statusResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return "", err
 	}
 	return result.Status, nil
 }
 
-// ChangeAdminPassword change le mot de passe du compte admin via /api/users/change_password.
-// Utilise la Basic Auth avec le mot de passe courant.
-func (c *httpClient) ChangeAdminPassword(ctx context.Context, currentPassword, newPassword string) error {
-	body := strings.NewReader(fmt.Sprintf(
-		"login=admin&previousPassword=%s&password=%s",
-		currentPassword, newPassword,
-	))
+func (c *httpClient) Restart(ctx context.Context) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/system/restart", nil)
+	return err
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/users/change_password", body)
+func (c *httpClient) ChangeAdminPassword(ctx context.Context, currentPassword, newPassword string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/users/change_password",
+		strings.NewReader(fmt.Sprintf("login=admin&previousPassword=%s&password=%s", currentPassword, newPassword)))
 	if err != nil {
 		return err
 	}
@@ -101,4 +223,181 @@ func (c *httpClient) ChangeAdminPassword(ctx context.Context, currentPassword, n
 		return fmt.Errorf("change password failed with status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// --- Plugins ---
+
+type pluginsResponse struct {
+	Plugins []Plugin `json:"plugins"`
+}
+
+func (c *httpClient) ListInstalledPlugins(ctx context.Context) ([]Plugin, error) {
+	body, err := c.do(ctx, http.MethodGet, "/api/plugins/installed", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result pluginsResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return result.Plugins, nil
+}
+
+func (c *httpClient) InstallPlugin(ctx context.Context, key, version string) error {
+	params := url.Values{"key": {key}}
+	if version != "" {
+		params.Set("version", version)
+	}
+	_, err := c.do(ctx, http.MethodPost, "/api/plugins/install", params)
+	return err
+}
+
+func (c *httpClient) UninstallPlugin(ctx context.Context, key string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/plugins/uninstall", url.Values{"key": {key}})
+	return err
+}
+
+// --- Projets ---
+
+type projectSearchResponse struct {
+	Components []Project `json:"components"`
+}
+
+func (c *httpClient) CreateProject(ctx context.Context, key, name, visibility string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/projects/create", url.Values{
+		"project":    {key},
+		"name":       {name},
+		"visibility": {visibility},
+	})
+	return err
+}
+
+func (c *httpClient) GetProject(ctx context.Context, key string) (*Project, error) {
+	body, err := c.do(ctx, http.MethodGet, "/api/projects/search", url.Values{"projects": {key}})
+	if err != nil {
+		return nil, err
+	}
+	var result projectSearchResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	if len(result.Components) == 0 {
+		return nil, fmt.Errorf("project %q not found", key)
+	}
+	return &result.Components[0], nil
+}
+
+func (c *httpClient) DeleteProject(ctx context.Context, key string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/projects/delete", url.Values{"project": {key}})
+	return err
+}
+
+// --- Quality Gates ---
+
+type qualityGatesResponse struct {
+	Qualitygates []QualityGate `json:"qualitygates"`
+}
+
+type qualityGateResponse struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+type conditionResponse struct {
+	ID     int64  `json:"id"`
+	Metric string `json:"metric"`
+	Op     string `json:"op"`
+	Error  string `json:"error"`
+}
+
+func (c *httpClient) ListQualityGates(ctx context.Context) ([]QualityGate, error) {
+	body, err := c.do(ctx, http.MethodGet, "/api/qualitygates/list", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result qualityGatesResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return result.Qualitygates, nil
+}
+
+func (c *httpClient) CreateQualityGate(ctx context.Context, name string) (*QualityGate, error) {
+	body, err := c.do(ctx, http.MethodPost, "/api/qualitygates/create", url.Values{"name": {name}})
+	if err != nil {
+		return nil, err
+	}
+	var result qualityGateResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return &QualityGate{ID: result.ID, Name: result.Name}, nil
+}
+
+func (c *httpClient) DeleteQualityGate(ctx context.Context, name string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/qualitygates/delete", url.Values{"name": {name}})
+	return err
+}
+
+func (c *httpClient) AddCondition(ctx context.Context, gateID int64, metric, op, value string) (*Condition, error) {
+	body, err := c.do(ctx, http.MethodPost, "/api/qualitygates/create_condition", url.Values{
+		"gateId": {fmt.Sprintf("%d", gateID)},
+		"metric": {metric},
+		"op":     {op},
+		"error":  {value},
+	})
+	if err != nil {
+		return nil, err
+	}
+	var result conditionResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return &Condition{ID: result.ID, Metric: result.Metric, Op: result.Op, Error: result.Error}, nil
+}
+
+func (c *httpClient) RemoveCondition(ctx context.Context, conditionID int64) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/qualitygates/delete_condition",
+		url.Values{"id": {fmt.Sprintf("%d", conditionID)}})
+	return err
+}
+
+func (c *httpClient) SetAsDefault(ctx context.Context, name string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/qualitygates/set_as_default", url.Values{"name": {name}})
+	return err
+}
+
+func (c *httpClient) AssignQualityGate(ctx context.Context, projectKey, gateName string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/qualitygates/select", url.Values{
+		"projectKey": {projectKey},
+		"gateId":     {},
+		"gateName":   {gateName},
+	})
+	return err
+}
+
+// --- Tokens ---
+
+func (c *httpClient) GenerateToken(ctx context.Context, name, tokenType, projectKey string) (*Token, error) {
+	params := url.Values{
+		"name": {name},
+		"type": {tokenType},
+	}
+	if projectKey != "" {
+		params.Set("projectKey", projectKey)
+	}
+	body, err := c.do(ctx, http.MethodPost, "/api/user_tokens/generate", params)
+	if err != nil {
+		return nil, err
+	}
+	var result Token
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *httpClient) RevokeToken(ctx context.Context, name string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/user_tokens/revoke", url.Values{"name": {name}})
+	return err
 }

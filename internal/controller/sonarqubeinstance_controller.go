@@ -51,7 +51,7 @@ type SonarQubeInstanceReconciler struct {
 	client.Client
 	Scheme         *runtime.Scheme
 	Recorder       record.EventRecorder
-	NewSonarClient func(baseURL string) sonarqube.Client
+	NewSonarClient func(baseURL, token string) sonarqube.Client
 }
 
 // +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubeinstances,verbs=get;list;watch;create;update;patch;delete
@@ -109,7 +109,7 @@ func (r *SonarQubeInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 func (r *SonarQubeInstanceReconciler) reconcileHealth(ctx context.Context, instance *sonarqubev1alpha1.SonarQubeInstance, serviceURL string) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	sonarClient := r.NewSonarClient(serviceURL)
+	sonarClient := r.NewSonarClient(serviceURL, "")
 
 	status, err := sonarClient.GetStatus(ctx)
 	if err != nil {

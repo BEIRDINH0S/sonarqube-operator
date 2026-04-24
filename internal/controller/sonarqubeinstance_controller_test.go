@@ -36,6 +36,8 @@ import (
 
 // mockSonarClient est un faux client SonarQube pour les tests.
 // Il implémente l'interface sonarqube.Client.
+// mockSonarClient implémente sonarqube.Client pour les tests.
+// Seules GetStatus et ChangeAdminPassword ont une logique — les autres retournent nil.
 type mockSonarClient struct {
 	status              string
 	statusErr           error
@@ -46,11 +48,38 @@ type mockSonarClient struct {
 func (m *mockSonarClient) GetStatus(_ context.Context) (string, error) {
 	return m.status, m.statusErr
 }
-
 func (m *mockSonarClient) ChangeAdminPassword(_ context.Context, _, _ string) error {
 	m.changePasswordCalls++
 	return m.changePasswordErr
 }
+func (m *mockSonarClient) Restart(_ context.Context) error { return nil }
+func (m *mockSonarClient) ListInstalledPlugins(_ context.Context) ([]sonarqube.Plugin, error) {
+	return nil, nil
+}
+func (m *mockSonarClient) InstallPlugin(_ context.Context, _, _ string) error    { return nil }
+func (m *mockSonarClient) UninstallPlugin(_ context.Context, _ string) error     { return nil }
+func (m *mockSonarClient) CreateProject(_ context.Context, _, _, _ string) error { return nil }
+func (m *mockSonarClient) GetProject(_ context.Context, _ string) (*sonarqube.Project, error) {
+	return nil, nil
+}
+func (m *mockSonarClient) DeleteProject(_ context.Context, _ string) error { return nil }
+func (m *mockSonarClient) ListQualityGates(_ context.Context) ([]sonarqube.QualityGate, error) {
+	return nil, nil
+}
+func (m *mockSonarClient) CreateQualityGate(_ context.Context, _ string) (*sonarqube.QualityGate, error) {
+	return nil, nil
+}
+func (m *mockSonarClient) DeleteQualityGate(_ context.Context, _ string) error { return nil }
+func (m *mockSonarClient) AddCondition(_ context.Context, _ int64, _, _, _ string) (*sonarqube.Condition, error) {
+	return nil, nil
+}
+func (m *mockSonarClient) RemoveCondition(_ context.Context, _ int64) error       { return nil }
+func (m *mockSonarClient) SetAsDefault(_ context.Context, _ string) error         { return nil }
+func (m *mockSonarClient) AssignQualityGate(_ context.Context, _, _ string) error { return nil }
+func (m *mockSonarClient) GenerateToken(_ context.Context, _, _, _ string) (*sonarqube.Token, error) {
+	return nil, nil
+}
+func (m *mockSonarClient) RevokeToken(_ context.Context, _ string) error { return nil }
 
 // newTestReconciler crée un reconciler prêt pour les tests avec un mock client injecté.
 func newTestReconciler(mock *mockSonarClient) *SonarQubeInstanceReconciler {
@@ -58,7 +87,7 @@ func newTestReconciler(mock *mockSonarClient) *SonarQubeInstanceReconciler {
 		Client:   k8sClient,
 		Scheme:   k8sClient.Scheme(),
 		Recorder: record.NewFakeRecorder(10),
-		NewSonarClient: func(_ string) sonarqube.Client {
+		NewSonarClient: func(_, _ string) sonarqube.Client {
 			return mock
 		},
 	}

@@ -180,10 +180,12 @@ func main() {
 	}
 
 	if err := (&controller.SonarQubeInstanceReconciler{
-		Client:         mgr.GetClient(),
-		Scheme:         mgr.GetScheme(),
-		Recorder:       mgr.GetEventRecorderFor("sonarqubeinstance-controller"),
-		NewSonarClient: sonarqube.NewClient,
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("sonarqubeinstance-controller"),
+		NewSonarClient: func(baseURL, token string) sonarqube.Client {
+			return sonarqube.NewClient(baseURL, token)
+		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "SonarQubeInstance")
 		os.Exit(1)
