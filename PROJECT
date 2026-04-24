@@ -8,4 +8,14 @@ layout:
 - go.kubebuilder.io/v4
 projectName: sonarqube-operator
 repo: github.com/BEIRDINH0S/sonarqube-operator
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: sonarqube.io
+  group: sonarqube
+  kind: SonarQubeInstance
+  path: github.com/BEIRDINH0S/sonarqube-operator/api/v1alpha1
+  version: v1alpha1
 version: "3"
