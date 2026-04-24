@@ -37,6 +37,7 @@ import (
 
 	sonarqubev1alpha1 "github.com/BEIRDINH0S/sonarqube-operator/api/v1alpha1"
 	"github.com/BEIRDINH0S/sonarqube-operator/internal/controller"
+	"github.com/BEIRDINH0S/sonarqube-operator/internal/sonarqube"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -179,8 +180,10 @@ func main() {
 	}
 
 	if err := (&controller.SonarQubeInstanceReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		Recorder:       mgr.GetEventRecorderFor("sonarqubeinstance-controller"),
+		NewSonarClient: sonarqube.NewClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "SonarQubeInstance")
 		os.Exit(1)

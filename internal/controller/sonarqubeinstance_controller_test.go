@@ -27,12 +27,43 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	sonarqubev1alpha1 "github.com/BEIRDINH0S/sonarqube-operator/api/v1alpha1"
+	"github.com/BEIRDINH0S/sonarqube-operator/internal/sonarqube"
 )
 
-// newTestInstance retourne une SonarQubeInstance minimale valide pour les tests.
+// mockSonarClient est un faux client SonarQube pour les tests.
+// Il implémente l'interface sonarqube.Client.
+type mockSonarClient struct {
+	status              string
+	statusErr           error
+	changePasswordErr   error
+	changePasswordCalls int
+}
+
+func (m *mockSonarClient) GetStatus(_ context.Context) (string, error) {
+	return m.status, m.statusErr
+}
+
+func (m *mockSonarClient) ChangeAdminPassword(_ context.Context, _, _ string) error {
+	m.changePasswordCalls++
+	return m.changePasswordErr
+}
+
+// newTestReconciler crée un reconciler prêt pour les tests avec un mock client injecté.
+func newTestReconciler(mock *mockSonarClient) *SonarQubeInstanceReconciler {
+	return &SonarQubeInstanceReconciler{
+		Client:   k8sClient,
+		Scheme:   k8sClient.Scheme(),
+		Recorder: record.NewFakeRecorder(10),
+		NewSonarClient: func(_ string) sonarqube.Client {
+			return mock
+		},
+	}
+}
+
 func newTestInstance(name string) *sonarqubev1alpha1.SonarQubeInstance {
 	return &sonarqubev1alpha1.SonarQubeInstance{
 		ObjectMeta: metav1.ObjectMeta{
@@ -53,12 +84,12 @@ func newTestInstance(name string) *sonarqubev1alpha1.SonarQubeInstance {
 	}
 }
 
-// --- Tests unitaires purs (pas de cluster K8s) ---
+// --- Tests unitaires purs (sans cluster K8s) ---
 
 var _ = Describe("buildStatefulSet", func() {
 	r := &SonarQubeInstanceReconciler{}
 
-	It("construit l'image correctement depuis edition et version", func() {
+	It("construit l'image depuis edition et version", func() {
 		instance := newTestInstance("test")
 		sts := r.buildStatefulSet(instance)
 		Expect(sts.Spec.Template.Spec.Containers[0].Image).To(Equal("sonarqube:10.3-community"))
@@ -88,9 +119,8 @@ var _ = Describe("buildStatefulSet", func() {
 	It("construit l'URL JDBC correctement", func() {
 		instance := newTestInstance("test")
 		sts := r.buildStatefulSet(instance)
-		envVars := sts.Spec.Template.Spec.Containers[0].Env
 		var jdbcURL string
-		for _, e := range envVars {
+		for _, e := range sts.Spec.Template.Spec.Containers[0].Env {
 			if e.Name == "SONAR_JDBC_URL" {
 				jdbcURL = e.Value
 			}
@@ -101,8 +131,7 @@ var _ = Describe("buildStatefulSet", func() {
 	It("monte le PVC data sur /opt/sonarqube/data", func() {
 		instance := newTestInstance("test")
 		sts := r.buildStatefulSet(instance)
-		mounts := sts.Spec.Template.Spec.Containers[0].VolumeMounts
-		Expect(mounts).To(ContainElement(corev1.VolumeMount{
+		Expect(sts.Spec.Template.Spec.Containers[0].VolumeMounts).To(ContainElement(corev1.VolumeMount{
 			Name:      "data",
 			MountPath: "/opt/sonarqube/data",
 		}))
@@ -137,58 +166,104 @@ var _ = Describe("buildService", func() {
 
 var _ = Describe("SonarQubeInstance Controller (envtest)", func() {
 	ctx := context.Background()
-	instanceName := "envtest-sonarqube"
-	namespacedName := types.NamespacedName{Name: instanceName, Namespace: "default"}
 
-	AfterEach(func() {
-		instance := &sonarqubev1alpha1.SonarQubeInstance{}
-		if err := k8sClient.Get(ctx, namespacedName, instance); err == nil {
-			Expect(k8sClient.Delete(ctx, instance)).To(Succeed())
+	createAdminSecret := func() {
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "sonar-admin", Namespace: "default"},
+			Data:       map[string][]byte{"password": []byte("newpassword123")},
 		}
-	})
+		_ = k8sClient.Create(ctx, secret)
+	}
+
+	deleteInstance := func(name string) {
+		instance := &sonarqubev1alpha1.SonarQubeInstance{}
+		nn := types.NamespacedName{Name: name, Namespace: "default"}
+		if err := k8sClient.Get(ctx, nn, instance); err == nil {
+			_ = k8sClient.Delete(ctx, instance)
+		}
+	}
 
 	It("crée un StatefulSet et un Service après réconciliation", func() {
-		By("créant la SonarQubeInstance dans le cluster")
-		instance := newTestInstance(instanceName)
-		Expect(k8sClient.Create(ctx, instance)).To(Succeed())
+		name := "test-create"
+		nn := types.NamespacedName{Name: name, Namespace: "default"}
+		defer deleteInstance(name)
 
-		By("déclenchant la réconciliation")
-		reconciler := &SonarQubeInstanceReconciler{
-			Client: k8sClient,
-			Scheme: k8sClient.Scheme(),
-		}
-		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: namespacedName})
+		mock := &mockSonarClient{statusErr: fmt.Errorf("not reachable")}
+		Expect(k8sClient.Create(ctx, newTestInstance(name))).To(Succeed())
+
+		_, err := newTestReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
 		Expect(err).NotTo(HaveOccurred())
 
-		By("vérifiant que le StatefulSet a été créé")
-		sts := &appsv1.StatefulSet{}
-		Expect(k8sClient.Get(ctx, namespacedName, sts)).To(Succeed())
-		Expect(sts.Spec.Template.Spec.Containers[0].Image).To(Equal("sonarqube:10.3-community"))
-
-		By("vérifiant que le Service a été créé")
-		svc := &corev1.Service{}
-		Expect(k8sClient.Get(ctx, namespacedName, svc)).To(Succeed())
-		Expect(svc.Spec.Ports[0].Port).To(Equal(int32(9000)))
+		Expect(k8sClient.Get(ctx, nn, &appsv1.StatefulSet{})).To(Succeed())
+		Expect(k8sClient.Get(ctx, nn, &corev1.Service{})).To(Succeed())
 	})
 
-	It("met à jour le status après réconciliation", func() {
-		By("créant la SonarQubeInstance")
-		instance := newTestInstance(instanceName)
+	It("reste en Progressing quand SonarQube n'est pas joignable", func() {
+		name := "test-progressing"
+		nn := types.NamespacedName{Name: name, Namespace: "default"}
+		defer deleteInstance(name)
+
+		mock := &mockSonarClient{statusErr: fmt.Errorf("connection refused")}
+		Expect(k8sClient.Create(ctx, newTestInstance(name))).To(Succeed())
+
+		result, err := newTestReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(requeueAfterHealthCheck))
+
+		updated := &sonarqubev1alpha1.SonarQubeInstance{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal("Progressing"))
+	})
+
+	It("reste en Progressing quand SonarQube répond STARTING", func() {
+		name := "test-starting"
+		nn := types.NamespacedName{Name: name, Namespace: "default"}
+		defer deleteInstance(name)
+
+		mock := &mockSonarClient{status: "STARTING"}
+		Expect(k8sClient.Create(ctx, newTestInstance(name))).To(Succeed())
+
+		result, err := newTestReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(requeueAfterHealthCheck))
+	})
+
+	It("passe en Ready quand SonarQube répond UP et le mot de passe est déjà initialisé", func() {
+		name := "test-ready"
+		nn := types.NamespacedName{Name: name, Namespace: "default"}
+		defer deleteInstance(name)
+
+		instance := newTestInstance(name)
+		instance.Annotations = map[string]string{annotationAdminInitialized: "true"}
 		Expect(k8sClient.Create(ctx, instance)).To(Succeed())
 
-		By("réconciliant")
-		reconciler := &SonarQubeInstanceReconciler{
-			Client: k8sClient,
-			Scheme: k8sClient.Scheme(),
-		}
-		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: namespacedName})
+		mock := &mockSonarClient{status: "UP"}
+		_, err := newTestReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
 		Expect(err).NotTo(HaveOccurred())
 
-		By("vérifiant le status")
 		updated := &sonarqubev1alpha1.SonarQubeInstance{}
-		Expect(k8sClient.Get(ctx, namespacedName, updated)).To(Succeed())
-		Expect(updated.Status.Phase).To(Equal("Progressing"))
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal("Ready"))
 		Expect(updated.Status.Version).To(Equal("10.3"))
-		Expect(updated.Status.URL).To(Equal(fmt.Sprintf("http://%s.default:9000", instanceName)))
+	})
+
+	It("change le mot de passe admin au premier démarrage quand SonarQube est UP", func() {
+		name := "test-firstboot"
+		nn := types.NamespacedName{Name: name, Namespace: "default"}
+		defer deleteInstance(name)
+		createAdminSecret()
+
+		Expect(k8sClient.Create(ctx, newTestInstance(name))).To(Succeed())
+
+		mock := &mockSonarClient{status: "UP"}
+		_, err := newTestReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(mock.changePasswordCalls).To(Equal(1))
+
+		updated := &sonarqubev1alpha1.SonarQubeInstance{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		Expect(updated.Annotations[annotationAdminInitialized]).To(Equal("true"))
+		Expect(updated.Status.Phase).To(Equal("Ready"))
 	})
 })
