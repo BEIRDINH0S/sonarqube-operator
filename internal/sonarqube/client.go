@@ -28,6 +28,13 @@ import (
 	"time"
 )
 
+// errIsAPIError retourne true si l'erreur vient d'une réponse JSON SonarQube (4xx avec body).
+// Permet de distinguer "ressource absente" d'une vraie erreur réseau.
+func errIsAPIError(err error) bool {
+	var e *apiError
+	return errors.As(err, &e)
+}
+
 // ErrNotFound est retourné quand une ressource n'existe pas dans SonarQube.
 // Utiliser errors.Is(err, ErrNotFound) pour distinguer "absent" d'une vraie erreur réseau.
 var ErrNotFound = errors.New("not found")
@@ -385,10 +392,15 @@ func (c *httpClient) ListQualityGates(ctx context.Context) ([]QualityGate, error
 
 // GetQualityGate retourne le quality gate avec ses conditions via /api/qualitygates/show.
 // L'appel /api/qualitygates/list ne renvoie pas les conditions — seul /show le fait.
+// Retourne ErrNotFound si SonarQube répond avec une erreur API (gate absent).
+// Propage les erreurs réseau sans les transformer en ErrNotFound.
 func (c *httpClient) GetQualityGate(ctx context.Context, name string) (*QualityGate, error) {
 	body, err := c.do(ctx, http.MethodGet, "/api/qualitygates/show", url.Values{"name": {name}})
 	if err != nil {
-		return nil, fmt.Errorf("quality gate %q: %w", name, ErrNotFound)
+		if errIsAPIError(err) {
+			return nil, fmt.Errorf("quality gate %q: %w", name, ErrNotFound)
+		}
+		return nil, err
 	}
 	var result QualityGate
 	if err := json.Unmarshal(body, &result); err != nil {

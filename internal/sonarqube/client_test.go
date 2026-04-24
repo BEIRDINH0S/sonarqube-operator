@@ -18,6 +18,7 @@ package sonarqube_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -189,6 +190,49 @@ func TestAddCondition(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(10), cond.ID)
 	assert.Equal(t, "coverage", cond.Metric)
+}
+
+func TestGetQualityGate(t *testing.T) {
+	_, client := newTestServer(t, map[string]http.HandlerFunc{
+		"/api/qualitygates/show": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":7,"name":"strict-gate","conditions":[
+				{"id":101,"metric":"coverage","op":"LT","error":"80"}
+			]}`))
+		},
+	})
+
+	gate, err := client.GetQualityGate(context.Background(), "strict-gate")
+	require.NoError(t, err)
+	assert.Equal(t, int64(7), gate.ID)
+	assert.Equal(t, "strict-gate", gate.Name)
+	assert.Len(t, gate.Conditions, 1)
+	assert.Equal(t, "coverage", gate.Conditions[0].Metric)
+}
+
+func TestGetQualityGate_NotFound(t *testing.T) {
+	_, client := newTestServer(t, map[string]http.HandlerFunc{
+		"/api/qualitygates/show": func(w http.ResponseWriter, _ *http.Request) {
+			// SonarQube retourne 400 avec un body d'erreur quand le gate est absent
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"errors":[{"msg":"No quality gate has been found for name 'unknown'"}]}`))
+		},
+	})
+
+	_, err := client.GetQualityGate(context.Background(), "unknown")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, sonarqube.ErrNotFound)
+}
+
+func TestGetQualityGate_NetworkError_NotTreatedAsNotFound(t *testing.T) {
+	// Client pointant vers un serveur inexistant — erreur réseau pure
+	client := sonarqube.NewClient("http://127.0.0.1:19999", "token")
+
+	_, err := client.GetQualityGate(context.Background(), "my-gate")
+	require.Error(t, err)
+	// Une erreur réseau NE doit PAS être ErrNotFound
+	assert.False(t, errors.Is(err, sonarqube.ErrNotFound),
+		"network error should not be treated as ErrNotFound")
 }
 
 func TestBearerTokenSent(t *testing.T) {

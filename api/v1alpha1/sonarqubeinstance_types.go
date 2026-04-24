@@ -76,13 +76,17 @@ type DatabaseSpec struct {
 	SecretRef string `json:"secretRef"`
 }
 
-// PersistenceSpec configures the PVC for SonarQube data.
+// PersistenceSpec configures the PVCs for SonarQube data and extensions.
 type PersistenceSpec struct {
-	// size is the requested storage size (e.g. "10Gi").
+	// size is the requested storage size for the data directory (e.g. "10Gi").
 	// +kubebuilder:default="10Gi"
 	Size string `json:"size,omitempty"`
 
-	// storageClass is the name of the StorageClass to use.
+	// extensionsSize is the requested storage size for the plugins/extensions directory (e.g. "1Gi").
+	// +kubebuilder:default="1Gi"
+	ExtensionsSize string `json:"extensionsSize,omitempty"`
+
+	// storageClass is the name of the StorageClass to use for both PVCs.
 	// +optional
 	StorageClass string `json:"storageClass,omitempty"`
 }
@@ -96,6 +100,10 @@ type IngressSpec struct {
 	// host is the hostname for the Ingress rule (e.g. "sonarqube.example.com").
 	// +optional
 	Host string `json:"host,omitempty"`
+
+	// ingressClassName is the name of the IngressClass to use.
+	// +optional
+	IngressClassName string `json:"ingressClassName,omitempty"`
 }
 
 // SonarQubeInstanceStatus defines the observed state of SonarQubeInstance.
