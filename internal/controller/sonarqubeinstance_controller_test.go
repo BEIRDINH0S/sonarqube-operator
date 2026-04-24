@@ -56,8 +56,11 @@ type mockSonarClient struct {
 	assignQualityGateCalls int
 	generateTokenResult    *sonarqube.Token
 	generateTokenErr       error
+	// auth
+	validateAuthErr error
 	// quality gate
 	listQualityGatesResult  []sonarqube.QualityGate
+	getQualityGateResult    *sonarqube.QualityGate
 	createQualityGateResult *sonarqube.QualityGate
 	createQualityGateCalls  int
 	deleteQualityGateCalls  int
@@ -74,6 +77,9 @@ func (m *mockSonarClient) ChangeAdminPassword(_ context.Context, _, _ string) er
 	return m.changePasswordErr
 }
 func (m *mockSonarClient) Restart(_ context.Context) error { return nil }
+func (m *mockSonarClient) ValidateAuth(_ context.Context) error {
+	return m.validateAuthErr
+}
 func (m *mockSonarClient) ListInstalledPlugins(_ context.Context) ([]sonarqube.Plugin, error) {
 	return m.installedPlugins, nil
 }
@@ -101,6 +107,12 @@ func (m *mockSonarClient) DeleteProject(_ context.Context, _ string) error {
 func (m *mockSonarClient) UpdateProjectVisibility(_ context.Context, _, _ string) error { return nil }
 func (m *mockSonarClient) ListQualityGates(_ context.Context) ([]sonarqube.QualityGate, error) {
 	return m.listQualityGatesResult, nil
+}
+func (m *mockSonarClient) GetQualityGate(_ context.Context, _ string) (*sonarqube.QualityGate, error) {
+	if m.getQualityGateResult == nil {
+		return nil, sonarqube.ErrNotFound
+	}
+	return m.getQualityGateResult, nil
 }
 func (m *mockSonarClient) CreateQualityGate(_ context.Context, _ string) (*sonarqube.QualityGate, error) {
 	m.createQualityGateCalls++

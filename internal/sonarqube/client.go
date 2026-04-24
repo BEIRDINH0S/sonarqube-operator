@@ -79,6 +79,7 @@ type Client interface {
 	GetStatus(ctx context.Context) (string, error)
 	Restart(ctx context.Context) error
 	ChangeAdminPassword(ctx context.Context, currentPassword, newPassword string) error
+	ValidateAuth(ctx context.Context) error
 
 	// Plugins
 	ListInstalledPlugins(ctx context.Context) ([]Plugin, error)
@@ -93,6 +94,7 @@ type Client interface {
 
 	// Quality Gates
 	ListQualityGates(ctx context.Context) ([]QualityGate, error)
+	GetQualityGate(ctx context.Context, name string) (*QualityGate, error)
 	CreateQualityGate(ctx context.Context, name string) (*QualityGate, error)
 	DeleteQualityGate(ctx context.Context, name string) error
 	AddCondition(ctx context.Context, gateID int64, metric, op, value string) (*Condition, error)
@@ -227,8 +229,13 @@ func (c *httpClient) Restart(ctx context.Context) error {
 }
 
 func (c *httpClient) ChangeAdminPassword(ctx context.Context, currentPassword, newPassword string) error {
+	params := url.Values{
+		"login":            {"admin"},
+		"previousPassword": {currentPassword},
+		"password":         {newPassword},
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/users/change_password",
-		strings.NewReader(fmt.Sprintf("login=admin&previousPassword=%s&password=%s", currentPassword, newPassword)))
+		strings.NewReader(params.Encode()))
 	if err != nil {
 		return err
 	}
@@ -243,6 +250,27 @@ func (c *httpClient) ChangeAdminPassword(ctx context.Context, currentPassword, n
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("change password failed with status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+type authValidateResponse struct {
+	Valid bool `json:"valid"`
+}
+
+// ValidateAuth vérifie que les credentials du client sont valides via /api/authentication/validate.
+// Retourne une erreur si l'auth échoue (401 ou valid=false).
+func (c *httpClient) ValidateAuth(ctx context.Context) error {
+	body, err := c.do(ctx, http.MethodGet, "/api/authentication/validate", nil)
+	if err != nil {
+		return err
+	}
+	var result authValidateResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return err
+	}
+	if !result.Valid {
+		return fmt.Errorf("authentication invalid")
 	}
 	return nil
 }
@@ -303,10 +331,13 @@ func (c *httpClient) GetProject(ctx context.Context, key string) (*Project, erro
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, err
 	}
-	if len(result.Components) == 0 {
-		return nil, fmt.Errorf("project %q: %w", key, ErrNotFound)
+	// L'API /projects/search fait un startsWith — on filtre côté client pour un match exact.
+	for i := range result.Components {
+		if result.Components[i].Key == key {
+			return &result.Components[i], nil
+		}
 	}
-	return &result.Components[0], nil
+	return nil, fmt.Errorf("project %q: %w", key, ErrNotFound)
 }
 
 func (c *httpClient) DeleteProject(ctx context.Context, key string) error {
@@ -350,6 +381,20 @@ func (c *httpClient) ListQualityGates(ctx context.Context) ([]QualityGate, error
 		return nil, err
 	}
 	return result.Qualitygates, nil
+}
+
+// GetQualityGate retourne le quality gate avec ses conditions via /api/qualitygates/show.
+// L'appel /api/qualitygates/list ne renvoie pas les conditions — seul /show le fait.
+func (c *httpClient) GetQualityGate(ctx context.Context, name string) (*QualityGate, error) {
+	body, err := c.do(ctx, http.MethodGet, "/api/qualitygates/show", url.Values{"name": {name}})
+	if err != nil {
+		return nil, fmt.Errorf("quality gate %q: %w", name, ErrNotFound)
+	}
+	var result QualityGate
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 func (c *httpClient) CreateQualityGate(ctx context.Context, name string) (*QualityGate, error) {

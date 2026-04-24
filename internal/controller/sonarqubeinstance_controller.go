@@ -79,6 +79,11 @@ func (r *SonarQubeInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, fmt.Errorf("reconciling StatefulSet: %w", err)
 	}
 
+	if err := r.reconcileHeadlessService(ctx, instance); err != nil {
+		r.Recorder.Event(instance, corev1.EventTypeWarning, "HeadlessServiceFailed", err.Error())
+		return ctrl.Result{}, fmt.Errorf("reconciling headless Service: %w", err)
+	}
+
 	if err := r.reconcileService(ctx, instance); err != nil {
 		r.Recorder.Event(instance, corev1.EventTypeWarning, "ServiceFailed", err.Error())
 		return ctrl.Result{}, fmt.Errorf("reconciling Service: %w", err)
@@ -168,9 +173,9 @@ func (r *SonarQubeInstanceReconciler) initializeAdmin(ctx context.Context, insta
 		return fmt.Errorf("admin secret %q missing key 'password'", instance.Spec.AdminSecretRef)
 	}
 
-	// Essayer d'abord avec le nouveau password (cas : password déjà changé, mais token Secret manquant)
+	// Essayer d'abord avec le nouveau password (endpoint authentifié = ValidateAuth)
 	clientNewPass := r.NewSonarClientWithPassword(serviceURL, "admin", newPassword)
-	if _, err := clientNewPass.GetStatus(ctx); err != nil {
+	if err := clientNewPass.ValidateAuth(ctx); err != nil {
 		// Nouveau password incorrect → le password n'a pas encore été changé → on le change
 		clientDefault := r.NewSonarClientWithPassword(serviceURL, "admin", defaultAdminPassword)
 		if err := clientDefault.ChangeAdminPassword(ctx, defaultAdminPassword, newPassword); err != nil {
@@ -180,8 +185,8 @@ func (r *SonarQubeInstanceReconciler) initializeAdmin(ctx context.Context, insta
 		clientNewPass = r.NewSonarClientWithPassword(serviceURL, "admin", newPassword)
 	}
 
-	// Générer un token Bearer pour l'opérateur
-	tokenName := instance.Name + "-operator"
+	// Nom unique incluant le namespace pour éviter les collisions entre instances homonymes
+	tokenName := fmt.Sprintf("%s-%s-operator", instance.Namespace, instance.Name)
 	token, err := clientNewPass.GenerateToken(ctx, tokenName, "USER_TOKEN", "")
 	if err != nil {
 		return fmt.Errorf("generating admin token: %w", err)
@@ -227,9 +232,32 @@ func (r *SonarQubeInstanceReconciler) reconcileStatefulSet(ctx context.Context, 
 		return err
 	}
 
+	// Mettre à jour uniquement si le contenu change pour éviter un Update toutes les 30s
+	desiredHash := podSpecHash(desired.Spec.Template.Spec)
+	existingHash := podSpecHash(existing.Spec.Template.Spec)
+	if desiredHash == existingHash {
+		return nil
+	}
+
 	existing.Spec.Template.Spec.InitContainers = desired.Spec.Template.Spec.InitContainers
 	existing.Spec.Template.Spec.Containers = desired.Spec.Template.Spec.Containers
+	existing.Spec.Template.Spec.SecurityContext = desired.Spec.Template.Spec.SecurityContext
 	return r.Update(ctx, existing)
+}
+
+func (r *SonarQubeInstanceReconciler) reconcileHeadlessService(ctx context.Context, instance *sonarqubev1alpha1.SonarQubeInstance) error {
+	desired := buildHeadlessService(instance)
+
+	if err := controllerutil.SetControllerReference(instance, desired, r.Scheme); err != nil {
+		return err
+	}
+
+	existing := &corev1.Service{}
+	err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	return err
 }
 
 func (r *SonarQubeInstanceReconciler) reconcileService(ctx context.Context, instance *sonarqubev1alpha1.SonarQubeInstance) error {
@@ -288,6 +316,7 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 	replicas := int32(1)
 
 	privileged := true
+	fsGroup := int64(1000)
 
 	return &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
@@ -296,11 +325,17 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 			Labels:    labels,
 		},
 		Spec: appsv1.StatefulSetSpec{
-			Replicas: &replicas,
-			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Replicas:    &replicas,
+			ServiceName: instance.Name + "-headless",
+			Selector:    &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
+					// fsGroup 1000 correspond à l'UID de l'image sonarqube officielle.
+					// Sans ça, le PVC monté est root:root et SonarQube crashe au démarrage.
+					SecurityContext: &corev1.PodSecurityContext{
+						FSGroup: &fsGroup,
+					},
 					// Elasticsearch embarqué dans SonarQube exige vm.max_map_count >= 524288.
 					// Ce init container règle le paramètre noyau avant que le pod démarre.
 					InitContainers: []corev1.Container{
