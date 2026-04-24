@@ -227,8 +227,8 @@ func (r *SonarQubeInstanceReconciler) reconcileStatefulSet(ctx context.Context, 
 		return err
 	}
 
-	existing.Spec.Template.Spec.Containers[0].Image = desired.Spec.Template.Spec.Containers[0].Image
-	existing.Spec.Template.Spec.Containers[0].Resources = desired.Spec.Template.Spec.Containers[0].Resources
+	existing.Spec.Template.Spec.InitContainers = desired.Spec.Template.Spec.InitContainers
+	existing.Spec.Template.Spec.Containers = desired.Spec.Template.Spec.Containers
 	return r.Update(ctx, existing)
 }
 
@@ -287,6 +287,8 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 
 	replicas := int32(1)
 
+	privileged := true
+
 	return &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      instance.Name,
@@ -299,6 +301,18 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
+					// Elasticsearch embarqué dans SonarQube exige vm.max_map_count >= 524288.
+					// Ce init container règle le paramètre noyau avant que le pod démarre.
+					InitContainers: []corev1.Container{
+						{
+							Name:    "sysctl",
+							Image:   "busybox:1.36",
+							Command: []string{"sysctl", "-w", "vm.max_map_count=524288"},
+							SecurityContext: &corev1.SecurityContext{
+								Privileged: &privileged,
+							},
+						},
+					},
 					Containers: []corev1.Container{
 						{
 							Name:      "sonarqube",
@@ -335,6 +349,18 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 									},
 								},
 							},
+							// startupProbe laisse jusqu'à 10 min au démarrage initial (Elasticsearch + migrations DB).
+							// Une fois SonarQube UP, readiness et liveness prennent le relais rapidement.
+							StartupProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/api/system/status",
+										Port: intstr.FromInt32(9000),
+									},
+								},
+								FailureThreshold: 60,
+								PeriodSeconds:    10,
+							},
 							ReadinessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									HTTPGet: &corev1.HTTPGetAction{
@@ -342,9 +368,18 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 										Port: intstr.FromInt32(9000),
 									},
 								},
-								InitialDelaySeconds: 60,
-								PeriodSeconds:       10,
-								FailureThreshold:    10,
+								PeriodSeconds:    10,
+								FailureThreshold: 3,
+							},
+							LivenessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/api/system/status",
+										Port: intstr.FromInt32(9000),
+									},
+								},
+								PeriodSeconds:    30,
+								FailureThreshold: 5,
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "data", MountPath: "/opt/sonarqube/data"},
