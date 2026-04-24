@@ -1,9 +1,23 @@
 apiVersion: sonarqube.sonarqube.io/v1alpha1
 kind: SonarQubeInstance
 metadata:
-  labels:
-    app.kubernetes.io/name: sonarqube-operator
-    app.kubernetes.io/managed-by: kustomize
-  name: sonarqubeinstance-sample
+  name: my-sonarqube
+  namespace: default
 spec:
-  # TODO(user): Add fields here
+  edition: community
+  version: "10.3"
+  database:
+    host: my-postgres
+    port: 5432
+    name: sonarqube
+    secretRef: sonar-db-secret
+  adminSecretRef: sonar-admin
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "500m"
+    limits:
+      memory: "4Gi"
+      cpu: "2"
+  persistence:
+    size: "10Gi"
