@@ -17,41 +17,103 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
 // SonarQubeInstanceSpec defines the desired state of SonarQubeInstance
 type SonarQubeInstanceSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	// edition is the SonarQube edition to deploy.
+	// +kubebuilder:validation:Enum=community;developer;enterprise
+	// +kubebuilder:default=community
+	Edition string `json:"edition"`
 
-	// foo is an example field of SonarQubeInstance. Edit sonarqubeinstance_types.go to remove/update
+	// version is the SonarQube image tag to deploy (e.g. "10.3").
+	// +kubebuilder:validation:MinLength=1
+	Version string `json:"version"`
+
+	// database contains the connection configuration for the PostgreSQL database.
+	Database DatabaseSpec `json:"database"`
+
+	// adminSecretRef is the name of the Secret containing the admin password (key: password).
+	// +kubebuilder:validation:MinLength=1
+	AdminSecretRef string `json:"adminSecretRef"`
+
+	// resources defines the CPU and memory requests/limits for the SonarQube container.
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// persistence configures the PersistentVolumeClaim for SonarQube data.
+	// +optional
+	Persistence PersistenceSpec `json:"persistence,omitempty"`
+
+	// ingress configures the optional Ingress resource.
+	// +optional
+	Ingress IngressSpec `json:"ingress,omitempty"`
+
+	// jvmOptions are extra JVM flags passed to SonarQube (e.g. "-Xmx2g -Xms1g").
+	// +optional
+	JvmOptions string `json:"jvmOptions,omitempty"`
+}
+
+// DatabaseSpec holds the PostgreSQL connection configuration.
+type DatabaseSpec struct {
+	// host is the hostname of the PostgreSQL server.
+	// +kubebuilder:validation:MinLength=1
+	Host string `json:"host"`
+
+	// port is the PostgreSQL port. Defaults to 5432.
+	// +kubebuilder:default=5432
+	// +optional
+	Port int32 `json:"port,omitempty"`
+
+	// name is the PostgreSQL database name.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// secretRef is the name of the Secret containing POSTGRES_USER and POSTGRES_PASSWORD.
+	// +kubebuilder:validation:MinLength=1
+	SecretRef string `json:"secretRef"`
+}
+
+// PersistenceSpec configures the PVC for SonarQube data.
+type PersistenceSpec struct {
+	// size is the requested storage size (e.g. "10Gi").
+	// +kubebuilder:default="10Gi"
+	Size string `json:"size,omitempty"`
+
+	// storageClass is the name of the StorageClass to use.
+	// +optional
+	StorageClass string `json:"storageClass,omitempty"`
+}
+
+// IngressSpec configures the optional Ingress resource.
+type IngressSpec struct {
+	// enabled controls whether an Ingress is created.
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled,omitempty"`
+
+	// host is the hostname for the Ingress rule (e.g. "sonarqube.example.com").
+	// +optional
+	Host string `json:"host,omitempty"`
 }
 
 // SonarQubeInstanceStatus defines the observed state of SonarQubeInstance.
 type SonarQubeInstanceStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// phase is the current lifecycle phase of the instance.
+	// +kubebuilder:validation:Enum=Pending;Progressing;Ready;Degraded
+	// +optional
+	Phase string `json:"phase,omitempty"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	// version is the SonarQube version currently running.
+	// +optional
+	Version string `json:"version,omitempty"`
 
-	// conditions represent the current state of the SonarQubeInstance resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// url is the internal cluster URL of the SonarQube service.
+	// +optional
+	URL string `json:"url,omitempty"`
+
+	// conditions represent the detailed state of the SonarQubeInstance.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -60,20 +122,21 @@ type SonarQubeInstanceStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
+// +kubebuilder:printcolumn:name="Version",type="string",JSONPath=".status.version"
+// +kubebuilder:printcolumn:name="URL",type="string",JSONPath=".status.url"
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // SonarQubeInstance is the Schema for the sonarqubeinstances API
 type SonarQubeInstance struct {
 	metav1.TypeMeta `json:",inline"`
 
-	// metadata is a standard object metadata
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitzero"`
 
-	// spec defines the desired state of SonarQubeInstance
 	// +required
 	Spec SonarQubeInstanceSpec `json:"spec"`
 
-	// status defines the observed state of SonarQubeInstance
 	// +optional
 	Status SonarQubeInstanceStatus `json:"status,omitzero"`
 }
