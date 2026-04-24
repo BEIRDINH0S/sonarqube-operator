@@ -273,7 +273,13 @@ func (r *SonarQubeInstanceReconciler) reconcileService(ctx context.Context, inst
 		r.Recorder.Event(instance, corev1.EventTypeNormal, "ServiceCreated", "Service created")
 		return r.Create(ctx, desired)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	// ClusterIP est immuable — on ne met à jour que les Ports et le Type
+	existing.Spec.Ports = desired.Spec.Ports
+	existing.Spec.Type = desired.Spec.Type
+	return r.Update(ctx, existing)
 }
 
 func (r *SonarQubeInstanceReconciler) reconcileIngress(ctx context.Context, instance *sonarqubev1alpha1.SonarQubeInstance) error {
@@ -293,7 +299,12 @@ func (r *SonarQubeInstanceReconciler) reconcileIngress(ctx context.Context, inst
 		r.Recorder.Event(instance, corev1.EventTypeNormal, "IngressCreated", "Ingress created")
 		return r.Create(ctx, desired)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	existing.Spec.Rules = desired.Spec.Rules
+	existing.Spec.IngressClassName = desired.Spec.IngressClassName
+	return r.Update(ctx, existing)
 }
 
 func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alpha1.SonarQubeInstance) *appsv1.StatefulSet {
@@ -311,6 +322,16 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 	storageSize := instance.Spec.Persistence.Size
 	if storageSize == "" {
 		storageSize = "10Gi"
+	}
+	extensionsSize := instance.Spec.Persistence.ExtensionsSize
+	if extensionsSize == "" {
+		extensionsSize = "1Gi"
+	}
+
+	var storageClassName *string
+	if instance.Spec.Persistence.StorageClass != "" {
+		sc := instance.Spec.Persistence.StorageClass
+		storageClassName = &sc
 	}
 
 	replicas := int32(1)
@@ -356,34 +377,7 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 							Ports: []corev1.ContainerPort{
 								{Name: "http", ContainerPort: 9000, Protocol: corev1.ProtocolTCP},
 							},
-							Env: []corev1.EnvVar{
-								{
-									Name: "SONAR_JDBC_URL",
-									Value: fmt.Sprintf("jdbc:postgresql://%s:%d/%s",
-										instance.Spec.Database.Host,
-										instance.Spec.Database.Port,
-										instance.Spec.Database.Name,
-									),
-								},
-								{
-									Name: "SONAR_JDBC_USERNAME",
-									ValueFrom: &corev1.EnvVarSource{
-										SecretKeyRef: &corev1.SecretKeySelector{
-											LocalObjectReference: corev1.LocalObjectReference{Name: instance.Spec.Database.SecretRef},
-											Key:                  "username",
-										},
-									},
-								},
-								{
-									Name: "SONAR_JDBC_PASSWORD",
-									ValueFrom: &corev1.EnvVarSource{
-										SecretKeyRef: &corev1.SecretKeySelector{
-											LocalObjectReference: corev1.LocalObjectReference{Name: instance.Spec.Database.SecretRef},
-											Key:                  "password",
-										},
-									},
-								},
-							},
+							Env: r.buildEnvVars(instance),
 							// startupProbe laisse jusqu'à 10 min au démarrage initial (Elasticsearch + migrations DB).
 							// Une fois SonarQube UP, readiness et liveness prennent le relais rapidement.
 							StartupProbe: &corev1.Probe{
@@ -418,6 +412,7 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "data", MountPath: "/opt/sonarqube/data"},
+								{Name: "extensions", MountPath: "/opt/sonarqube/extensions"},
 							},
 						},
 					},
@@ -427,7 +422,8 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "data"},
 					Spec: corev1.PersistentVolumeClaimSpec{
-						AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+						AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+						StorageClassName: storageClassName,
 						Resources: corev1.VolumeResourceRequirements{
 							Requests: corev1.ResourceList{
 								corev1.ResourceStorage: resource.MustParse(storageSize),
@@ -435,9 +431,59 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 						},
 					},
 				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "extensions"},
+					Spec: corev1.PersistentVolumeClaimSpec{
+						AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+						StorageClassName: storageClassName,
+						Resources: corev1.VolumeResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceStorage: resource.MustParse(extensionsSize),
+							},
+						},
+					},
+				},
 			},
 		},
 	}
+}
+
+func (r *SonarQubeInstanceReconciler) buildEnvVars(instance *sonarqubev1alpha1.SonarQubeInstance) []corev1.EnvVar {
+	envVars := []corev1.EnvVar{
+		{
+			Name: "SONAR_JDBC_URL",
+			Value: fmt.Sprintf("jdbc:postgresql://%s:%d/%s",
+				instance.Spec.Database.Host,
+				instance.Spec.Database.Port,
+				instance.Spec.Database.Name,
+			),
+		},
+		{
+			Name: "SONAR_JDBC_USERNAME",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: instance.Spec.Database.SecretRef},
+					Key:                  "username",
+				},
+			},
+		},
+		{
+			Name: "SONAR_JDBC_PASSWORD",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: instance.Spec.Database.SecretRef},
+					Key:                  "password",
+				},
+			},
+		},
+	}
+	if instance.Spec.JvmOptions != "" {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "SONAR_WEB_JAVAADDITIONALOPTS",
+			Value: instance.Spec.JvmOptions,
+		})
+	}
+	return envVars
 }
 
 func (r *SonarQubeInstanceReconciler) buildService(instance *sonarqubev1alpha1.SonarQubeInstance) *corev1.Service {
@@ -460,12 +506,19 @@ func (r *SonarQubeInstanceReconciler) buildService(instance *sonarqubev1alpha1.S
 
 func (r *SonarQubeInstanceReconciler) buildIngress(instance *sonarqubev1alpha1.SonarQubeInstance) *networkingv1.Ingress {
 	pathType := networkingv1.PathTypePrefix
+
+	var ingressClassName *string
+	if instance.Spec.Ingress.IngressClassName != "" {
+		ingressClassName = &instance.Spec.Ingress.IngressClassName
+	}
+
 	return &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      instance.Name,
 			Namespace: instance.Namespace,
 		},
 		Spec: networkingv1.IngressSpec{
+			IngressClassName: ingressClassName,
 			Rules: []networkingv1.IngressRule{
 				{
 					Host: instance.Spec.Ingress.Host,

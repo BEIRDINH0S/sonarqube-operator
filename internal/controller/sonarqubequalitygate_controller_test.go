@@ -120,6 +120,31 @@ var _ = Describe("SonarQubeQualityGate Controller", func() {
 		Expect(updated.Status.GateID).To(Equal(int64(42)))
 	})
 
+	It("ajoute les conditions dès la création du gate", func() {
+		instanceName := "qg-instance-create-with-cond"
+		qgName := "qg-create-with-conditions"
+		nn := types.NamespacedName{Name: qgName, Namespace: "default"}
+		defer deleteQG(qgName)
+		defer deleteInstanceIfExists(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		g := newTestQualityGate(qgName, instanceName, "Gate With Cond From Start")
+		g.Spec.Conditions = []sonarqubev1alpha1.QualityGateConditionSpec{
+			{Metric: "coverage", Operator: "LT", Value: "80"},
+		}
+		Expect(k8sClient.Create(ctx, g)).To(Succeed())
+
+		mock := &mockSonarClient{
+			createQualityGateResult: &sonarqube.QualityGate{ID: 55, Name: "Gate With Cond From Start"},
+		}
+		_, err := newQualityGateReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		// La condition doit être ajoutée lors de la même réconciliation que la création
+		Expect(mock.createQualityGateCalls).To(Equal(1))
+		Expect(mock.addConditionCalls).To(Equal(1))
+	})
+
 	It("ne recrée pas le gate s'il existe déjà", func() {
 		instanceName := "qg-instance-exists"
 		qgName := "qg-exists"

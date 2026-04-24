@@ -88,6 +88,13 @@ func (r *SonarQubeProjectReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	token, err := getInstanceAdminToken(ctx, r.Client, instance)
 	if err != nil {
+		if !project.DeletionTimestamp.IsZero() {
+			if controllerutil.ContainsFinalizer(project, projectFinalizer) {
+				controllerutil.RemoveFinalizer(project, projectFinalizer)
+				return ctrl.Result{}, r.Update(ctx, project)
+			}
+			return ctrl.Result{}, nil
+		}
 		log.Info("Admin token not yet available, requeueing", "error", err.Error())
 		project.Status.Phase = "Pending"
 		_ = r.Status().Update(ctx, project)

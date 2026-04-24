@@ -237,6 +237,31 @@ var _ = Describe("buildStatefulSet", func() {
 		storage := sts.Spec.VolumeClaimTemplates[0].Spec.Resources.Requests[corev1.ResourceStorage]
 		Expect(storage).To(Equal(resource.MustParse("10Gi")))
 	})
+
+	It("monte le PVC extensions sur /opt/sonarqube/extensions", func() {
+		instance := newTestInstance("test")
+		sts := r.buildStatefulSet(instance)
+		Expect(sts.Spec.Template.Spec.Containers[0].VolumeMounts).To(ContainElement(corev1.VolumeMount{
+			Name:      "extensions",
+			MountPath: "/opt/sonarqube/extensions",
+		}))
+		Expect(sts.Spec.VolumeClaimTemplates).To(HaveLen(2))
+		extStorage := sts.Spec.VolumeClaimTemplates[1].Spec.Resources.Requests[corev1.ResourceStorage]
+		Expect(extStorage).To(Equal(resource.MustParse("1Gi")))
+	})
+
+	It("transmet jvmOptions en variable d'environnement", func() {
+		instance := newTestInstance("test")
+		instance.Spec.JvmOptions = "-Xmx4g -Xms1g"
+		sts := r.buildStatefulSet(instance)
+		var found string
+		for _, e := range sts.Spec.Template.Spec.Containers[0].Env {
+			if e.Name == "SONAR_WEB_JAVAADDITIONALOPTS" {
+				found = e.Value
+			}
+		}
+		Expect(found).To(Equal("-Xmx4g -Xms1g"))
+	})
 })
 
 var _ = Describe("buildService", func() {

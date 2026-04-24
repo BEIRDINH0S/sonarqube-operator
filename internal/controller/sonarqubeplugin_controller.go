@@ -88,6 +88,14 @@ func (r *SonarQubePluginReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	token, err := getInstanceAdminToken(ctx, r.Client, instance)
 	if err != nil {
+		if !plugin.DeletionTimestamp.IsZero() {
+			// Token indisponible pendant la suppression — on retire le finalizer sans cleanup SonarQube
+			if controllerutil.ContainsFinalizer(plugin, pluginFinalizer) {
+				controllerutil.RemoveFinalizer(plugin, pluginFinalizer)
+				return ctrl.Result{}, r.Update(ctx, plugin)
+			}
+			return ctrl.Result{}, nil
+		}
 		log.Info("Admin token not yet available, requeueing", "error", err.Error())
 		plugin.Status.Phase = "Pending"
 		_ = r.Status().Update(ctx, plugin)

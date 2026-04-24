@@ -86,6 +86,13 @@ func (r *SonarQubeQualityGateReconciler) Reconcile(ctx context.Context, req ctrl
 
 	token, err := getInstanceAdminToken(ctx, r.Client, instance)
 	if err != nil {
+		if !gate.DeletionTimestamp.IsZero() {
+			if controllerutil.ContainsFinalizer(gate, qualityGateFinalizer) {
+				controllerutil.RemoveFinalizer(gate, qualityGateFinalizer)
+				return ctrl.Result{}, r.Update(ctx, gate)
+			}
+			return ctrl.Result{}, nil
+		}
 		log.Info("Admin token not yet available, requeueing", "error", err.Error())
 		gate.Status.Phase = "Pending"
 		_ = r.Status().Update(ctx, gate)
@@ -116,6 +123,7 @@ func (r *SonarQubeQualityGateReconciler) reconcileQualityGate(ctx context.Contex
 	}
 
 	var gateID int64
+	var currentConditions []sonarqube.Condition
 	if existing == nil {
 		// Le gate n'existe pas → le créer
 		created, err := sonarClient.CreateQualityGate(ctx, gate.Spec.Name)
@@ -128,15 +136,18 @@ func (r *SonarQubeQualityGateReconciler) reconcileQualityGate(ctx context.Contex
 		gateID = created.ID
 		r.Recorder.Event(gate, corev1.EventTypeNormal, "Created",
 			fmt.Sprintf("Quality gate %q created (id=%d)", gate.Spec.Name, gateID))
+		// currentConditions est nil — toutes les conditions désirées seront ajoutées
 	} else {
 		gateID = existing.ID
-		// Réconcilier les conditions : supprimer celles qui ne sont plus dans la spec, ajouter les nouvelles
-		if err := r.reconcileConditions(ctx, sonarClient, gateID, existing.Conditions, gate.Spec.Conditions); err != nil {
-			gate.Status.Phase = "Failed"
-			_ = r.Status().Update(ctx, gate)
-			r.Recorder.Event(gate, corev1.EventTypeWarning, "ConditionSyncFailed", err.Error())
-			return ctrl.Result{}, err
-		}
+		currentConditions = existing.Conditions
+	}
+
+	// Réconcilier les conditions (aussi bien pour un gate nouvellement créé que pour un existant)
+	if err := r.reconcileConditions(ctx, sonarClient, gateID, currentConditions, gate.Spec.Conditions); err != nil {
+		gate.Status.Phase = "Failed"
+		_ = r.Status().Update(ctx, gate)
+		r.Recorder.Event(gate, corev1.EventTypeWarning, "ConditionSyncFailed", err.Error())
+		return ctrl.Result{}, err
 	}
 
 	// Définir comme gate par défaut si demandé
