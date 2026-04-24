@@ -139,7 +139,7 @@ var _ = Describe("SonarQubePlugin Controller", func() {
 		updated := &sonarqubev1alpha1.SonarQubePlugin{}
 		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 		Expect(updated.Status.Phase).To(Equal("Installed"))
-		Expect(updated.Status.RestartRequired).To(BeTrue())
+		Expect(updated.Status.RestartRequired).To(BeFalse())
 	})
 
 	It("ne fait rien si le plugin est déjà installé avec la bonne version", func() {

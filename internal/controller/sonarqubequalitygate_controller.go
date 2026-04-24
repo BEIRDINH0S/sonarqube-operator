@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -65,7 +66,15 @@ func (r *SonarQubeQualityGateReconciler) Reconcile(ctx context.Context, req ctrl
 		Name:      gate.Spec.InstanceRef.Name,
 		Namespace: instanceNamespace,
 	}, instance); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		if client.IgnoreNotFound(err) != nil {
+			return ctrl.Result{}, err
+		}
+		// Instance is gone — remove finalizer so this resource can be deleted too
+		if controllerutil.ContainsFinalizer(gate, qualityGateFinalizer) {
+			controllerutil.RemoveFinalizer(gate, qualityGateFinalizer)
+			return ctrl.Result{}, r.Update(ctx, gate)
+		}
+		return ctrl.Result{}, nil
 	}
 
 	if instance.Status.Phase != "Ready" {
@@ -99,10 +108,11 @@ func (r *SonarQubeQualityGateReconciler) Reconcile(ctx context.Context, req ctrl
 }
 
 func (r *SonarQubeQualityGateReconciler) reconcileQualityGate(ctx context.Context, gate *sonarqubev1alpha1.SonarQubeQualityGate, sonarClient sonarqube.Client) (ctrl.Result, error) {
-	// Lister tous les quality gates pour trouver celui qui correspond au nom spécifié
-	existing, err := r.findGate(ctx, sonarClient, gate.Spec.Name)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("listing quality gates: %w", err)
+	// GetQualityGate utilise /api/qualitygates/show qui retourne les conditions (contrairement à /list).
+	// ErrNotFound signifie que le gate n'existe pas encore.
+	existing, err := sonarClient.GetQualityGate(ctx, gate.Spec.Name)
+	if err != nil && !errors.Is(err, sonarqube.ErrNotFound) {
+		return ctrl.Result{}, fmt.Errorf("getting quality gate: %w", err)
 	}
 
 	var gateID int64
@@ -139,21 +149,6 @@ func (r *SonarQubeQualityGateReconciler) reconcileQualityGate(ctx context.Contex
 	gate.Status.Phase = "Ready"
 	gate.Status.GateID = gateID
 	return ctrl.Result{}, r.Status().Update(ctx, gate)
-}
-
-// findGate parcourt la liste des quality gates et retourne celui dont le nom correspond.
-// Retourne nil si aucun gate avec ce nom n'est trouvé.
-func (r *SonarQubeQualityGateReconciler) findGate(ctx context.Context, sonarClient sonarqube.Client, name string) (*sonarqube.QualityGate, error) {
-	gates, err := sonarClient.ListQualityGates(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for i := range gates {
-		if gates[i].Name == name {
-			return &gates[i], nil
-		}
-	}
-	return nil, nil
 }
 
 // reconcileConditions synchronise les conditions entre la spec et SonarQube.

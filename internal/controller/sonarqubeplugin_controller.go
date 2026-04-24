@@ -67,9 +67,15 @@ func (r *SonarQubePluginReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		Name:      plugin.Spec.InstanceRef.Name,
 		Namespace: instanceNamespace,
 	}, instance); err != nil {
-		r.Recorder.Event(plugin, corev1.EventTypeWarning, "InstanceNotFound",
-			fmt.Sprintf("SonarQubeInstance %q not found", plugin.Spec.InstanceRef.Name))
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		if client.IgnoreNotFound(err) != nil {
+			return ctrl.Result{}, err
+		}
+		// Instance supprimée — retirer le finalizer pour ne pas bloquer la suppression du plugin
+		if controllerutil.ContainsFinalizer(plugin, pluginFinalizer) {
+			controllerutil.RemoveFinalizer(plugin, pluginFinalizer)
+			return ctrl.Result{}, r.Update(ctx, plugin)
+		}
+		return ctrl.Result{}, nil
 	}
 
 	// L'instance doit être Ready avant d'agir
@@ -158,13 +164,18 @@ func (r *SonarQubePluginReconciler) installPlugin(ctx context.Context, plugin *s
 		return ctrl.Result{}, fmt.Errorf("installing plugin: %w", err)
 	}
 
-	r.Recorder.Event(plugin, corev1.EventTypeNormal, "Installed",
-		fmt.Sprintf("Plugin %q installed, SonarQube restart required", plugin.Spec.Key))
+	// Déclencher le redémarrage de SonarQube pour activer le plugin.
+	// Le redémarrage est asynchrone : SonarQube revient UP après quelques secondes.
+	if err := sonarClient.Restart(ctx); err != nil {
+		r.Recorder.Event(plugin, corev1.EventTypeWarning, "RestartFailed", err.Error())
+	} else {
+		r.Recorder.Event(plugin, corev1.EventTypeNormal, "Restarted",
+			fmt.Sprintf("SonarQube restarted to activate plugin %q", plugin.Spec.Key))
+	}
 
-	// Marquer que SonarQube doit redémarrer
 	plugin.Status.Phase = "Installed"
 	plugin.Status.InstalledVersion = plugin.Spec.Version
-	plugin.Status.RestartRequired = true
+	plugin.Status.RestartRequired = false
 	return ctrl.Result{}, r.Status().Update(ctx, plugin)
 }
 
@@ -177,6 +188,10 @@ func (r *SonarQubePluginReconciler) handleDeletion(ctx context.Context, plugin *
 	if err := sonarClient.UninstallPlugin(ctx, plugin.Spec.Key); err != nil {
 		r.Recorder.Event(plugin, corev1.EventTypeWarning, "UninstallFailed", err.Error())
 		return ctrl.Result{}, fmt.Errorf("uninstalling plugin on deletion: %w", err)
+	}
+
+	if err := sonarClient.Restart(ctx); err != nil {
+		r.Recorder.Event(plugin, corev1.EventTypeWarning, "RestartFailed", err.Error())
 	}
 
 	r.Recorder.Event(plugin, corev1.EventTypeNormal, "Uninstalled",

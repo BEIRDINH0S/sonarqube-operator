@@ -69,7 +69,14 @@ func (r *SonarQubeProjectReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		Name:      project.Spec.InstanceRef.Name,
 		Namespace: instanceNamespace,
 	}, instance); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		if client.IgnoreNotFound(err) != nil {
+			return ctrl.Result{}, err
+		}
+		if controllerutil.ContainsFinalizer(project, projectFinalizer) {
+			controllerutil.RemoveFinalizer(project, projectFinalizer)
+			return ctrl.Result{}, r.Update(ctx, project)
+		}
+		return ctrl.Result{}, nil
 	}
 
 	if instance.Status.Phase != "Ready" {

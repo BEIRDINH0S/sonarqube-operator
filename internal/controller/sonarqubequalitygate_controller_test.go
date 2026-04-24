@@ -105,9 +105,8 @@ var _ = Describe("SonarQubeQualityGate Controller", func() {
 		newReadyInstance(ctx, instanceName)
 		Expect(k8sClient.Create(ctx, newTestQualityGate(qgName, instanceName, "My New Gate"))).To(Succeed())
 
-		// ListQualityGates retourne une liste vide → gate absent → CreateQualityGate attendu
+		// GetQualityGate retourne ErrNotFound (getQualityGateResult == nil) → gate absent → CreateQualityGate attendu
 		mock := &mockSonarClient{
-			listQualityGatesResult:  []sonarqube.QualityGate{},
 			createQualityGateResult: &sonarqube.QualityGate{ID: 42, Name: "My New Gate"},
 		}
 		_, err := newQualityGateReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
@@ -132,9 +131,7 @@ var _ = Describe("SonarQubeQualityGate Controller", func() {
 		Expect(k8sClient.Create(ctx, newTestQualityGate(qgName, instanceName, "Existing Gate"))).To(Succeed())
 
 		mock := &mockSonarClient{
-			listQualityGatesResult: []sonarqube.QualityGate{
-				{ID: 7, Name: "Existing Gate", Conditions: nil},
-			},
+			getQualityGateResult: &sonarqube.QualityGate{ID: 7, Name: "Existing Gate", Conditions: nil},
 		}
 		_, err := newQualityGateReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
 		Expect(err).NotTo(HaveOccurred())
@@ -164,9 +161,7 @@ var _ = Describe("SonarQubeQualityGate Controller", func() {
 
 		// Le gate existe mais n'a aucune condition → 2 AddCondition attendus
 		mock := &mockSonarClient{
-			listQualityGatesResult: []sonarqube.QualityGate{
-				{ID: 10, Name: "Gate With Conditions", Conditions: nil},
-			},
+			getQualityGateResult: &sonarqube.QualityGate{ID: 10, Name: "Gate With Conditions", Conditions: nil},
 		}
 		_, err := newQualityGateReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
 		Expect(err).NotTo(HaveOccurred())
@@ -192,14 +187,12 @@ var _ = Describe("SonarQubeQualityGate Controller", func() {
 
 		// SonarQube en a deux → la condition "duplicated_lines_density" doit être supprimée
 		mock := &mockSonarClient{
-			listQualityGatesResult: []sonarqube.QualityGate{
-				{
-					ID:   10,
-					Name: "Gate Remove",
-					Conditions: []sonarqube.Condition{
-						{ID: 101, Metric: "coverage", Op: "LT", Error: "80"},
-						{ID: 102, Metric: "duplicated_lines_density", Op: "GT", Error: "3"},
-					},
+			getQualityGateResult: &sonarqube.QualityGate{
+				ID:   10,
+				Name: "Gate Remove",
+				Conditions: []sonarqube.Condition{
+					{ID: 101, Metric: "coverage", Op: "LT", Error: "80"},
+					{ID: 102, Metric: "duplicated_lines_density", Op: "GT", Error: "3"},
 				},
 			},
 		}
@@ -223,7 +216,6 @@ var _ = Describe("SonarQubeQualityGate Controller", func() {
 		Expect(k8sClient.Create(ctx, g)).To(Succeed())
 
 		mock := &mockSonarClient{
-			listQualityGatesResult:  []sonarqube.QualityGate{},
 			createQualityGateResult: &sonarqube.QualityGate{ID: 99, Name: "Default Gate"},
 		}
 		_, err := newQualityGateReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
