@@ -124,12 +124,16 @@ nav:
           - SonarQubeUser: reference/crds/sonarqubeuser.md
       - Helm Values: reference/helm-values.md
       - Metrics: reference/metrics.md
+      - SonarQube API: reference/sonarqube-api.md
   - Operations:
       - operations/index.md
       - Monitoring: operations/monitoring.md
       - Upgrade: operations/upgrade.md
       - Troubleshooting: operations/troubleshooting.md
-  - Contributing: contributing.md
+  - Architecture: architecture.md
+  - Contributing:
+      - contributing.md
+      - Gotchas: contributing/gotchas.md
   - Changelog: changelog.md
 
 extra:

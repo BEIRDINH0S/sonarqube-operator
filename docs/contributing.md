@@ -233,3 +233,18 @@ The project follows the
 [Contributor Covenant](https://www.contributor-covenant.org/) v2.1. In
 short: be respectful, focus on the technical work, no harassment.
 Report issues to the repo maintainers.
+
+---
+
+## See also
+
+- [**Gotchas**](contributing/gotchas.md) — non-obvious traps we hit
+  while building this. Saves time when reading the controller code or
+  picking up a feature.
+- [**Architecture**](architecture.md) — the *why* behind the code
+  layout, the design decisions, and what is explicitly out of scope.
+- [**SonarQube API**](reference/sonarqube-api.md) — every SonarQube
+  REST endpoint the operator calls and the 9.x → 10.x compatibility
+  notes.
+- [**Roadmap**](https://github.com/BEIRDINH0S/sonarqube-operator/blob/main/ROADMAP.md)
+  — high-level direction and what's planned for the next milestones.
