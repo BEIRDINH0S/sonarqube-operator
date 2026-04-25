@@ -1,121 +1,122 @@
-# sonarqube-operator
-// TODO(user): Add simple overview of use/purpose
+# SonarQube Operator
+
+[![Tests](https://github.com/BEIRDINH0S/sonarqube-operator/actions/workflows/test.yml/badge.svg)](https://github.com/BEIRDINH0S/sonarqube-operator/actions/workflows/test.yml)
+[![Lint](https://github.com/BEIRDINH0S/sonarqube-operator/actions/workflows/lint.yml/badge.svg)](https://github.com/BEIRDINH0S/sonarqube-operator/actions/workflows/lint.yml)
+[![E2E](https://github.com/BEIRDINH0S/sonarqube-operator/actions/workflows/test-e2e.yml/badge.svg)](https://github.com/BEIRDINH0S/sonarqube-operator/actions/workflows/test-e2e.yml)
+[![Docs](https://img.shields.io/badge/docs-mkdocs-blue)](https://beirdinh0s.github.io/sonarqube-operator/)
+
+A Kubernetes operator that manages the full lifecycle of SonarQube and its
+configuration as code. Stop clicking through the SonarQube UI — declare your
+instances, plugins, projects, quality gates and users as Kubernetes resources,
+and let the operator keep them in sync.
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+
+SonarQube is universally deployed in CI/CD pipelines, but configuring it is
+still ClickOps: quality gates set by hand and lost when the database is
+restored, projects with inconsistent visibility, CI tokens generated once and
+never rotated. This operator fixes all of that.
+
+Five CRDs — `SonarQubeInstance`, `SonarQubePlugin`, `SonarQubeProject`,
+`SonarQubeQualityGate`, `SonarQubeUser` — cover the full surface, with drift
+detection, finalizers, validating webhooks, Prometheus metrics, and
+rate-limited reconciliation. Everything is reconciled continuously: change a
+CR, the operator drives the SonarQube API.
+
+For a hands-on tour see the
+[GitOps example repo](https://github.com/BEIRDINH0S/sonarqube-operator-gitops-example),
+which provisions a complete SonarQube setup — instance, plugins, project,
+quality gate, user — from a single Argo CD Application.
+
+📖 **Full documentation:** <https://beirdinh0s.github.io/sonarqube-operator/>
 
 ## Getting Started
 
 ### Prerequisites
-- go version v1.24.6+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+- Kubernetes v1.27+
+- An ingress controller (NGINX, Traefik, ...) if you want the operator-managed
+  Ingress for SonarQube
+- A PostgreSQL instance reachable from the cluster (the GitOps example
+  provisions a demo one inline)
 
-```sh
-make docker-build docker-push IMG=<some-registry>/sonarqube-operator:tag
-```
+### Install
 
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
-
-**Install the CRDs into the cluster:**
+**Helm (recommended):**
 
 ```sh
-make install
+helm install sonarqube-operator \
+  oci://ghcr.io/beirdinh0s/sonarqube-operator \
+  --version 0.5.0 \
+  --namespace sonarqube-operator-system --create-namespace
 ```
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+**kubectl:**
 
 ```sh
-make deploy IMG=<some-registry>/sonarqube-operator:tag
+kubectl apply -f https://github.com/BEIRDINH0S/sonarqube-operator/releases/latest/download/install.yaml
 ```
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
+### Try it out
 
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
+Apply the bundled samples (one CR per CRD):
 
 ```sh
 kubectl apply -k config/samples/
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
+Then walk through the
+[Quick Start](https://beirdinh0s.github.io/sonarqube-operator/getting-started/quick-start/)
+to see what the operator did with them.
 
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
-
-```sh
-kubectl delete -k config/samples/
-```
-
-**Delete the APIs(CRDs) from the cluster:**
+### Uninstall
 
 ```sh
-make uninstall
-```
+# Helm
+helm uninstall sonarqube-operator -n sonarqube-operator-system
 
-**UnDeploy the controller from the cluster:**
-
-```sh
-make undeploy
+# kubectl
+kubectl delete -f https://github.com/BEIRDINH0S/sonarqube-operator/releases/latest/download/install.yaml
 ```
 
 ## Project Distribution
 
-Following the options to release and provide this solution to the users.
+Tagged releases trigger the [release workflow](.github/workflows/release.yml),
+which publishes:
 
-### By providing a bundle with all YAML files
+- A multi-arch image (`amd64` + `arm64`) on GHCR with SBOM and SLSA provenance
+- The Helm chart as an OCI artifact at
+  `oci://ghcr.io/beirdinh0s/sonarqube-operator`
+- A single-file `install.yaml` attached to the GitHub Release for the
+  `kubectl apply` path
 
-1. Build the installer for the image built and published in the registry:
-
-```sh
-make build-installer IMG=<some-registry>/sonarqube-operator:tag
-```
-
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
-
-2. Using the installer
-
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/sonarqube-operator/<tag or branch>/dist/install.yaml
-```
-
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
-
-```sh
-kubebuilder edit --plugins=helm/v2-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
+See the
+[installation guide](https://beirdinh0s.github.io/sonarqube-operator/getting-started/installation/)
+for the supported install matrix.
 
 ## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
 
-**NOTE:** Run `make help` for more information on all potential `make` targets
+Contributions are welcome. Quick start:
 
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
+1. Branch off `main` (`feat/...`, `fix/...`).
+2. Make your changes; run the full sweep before pushing:
+   ```sh
+   make manifests generate fmt vet lint test
+   ```
+3. Open a PR with a [Conventional Commits](https://www.conventionalcommits.org/)
+   title and a description that covers the *why*, the approach, and how you
+   tested.
+4. CI must be green (`lint`, `test`, `test-e2e`).
+
+The full
+[Contributing guide](https://beirdinh0s.github.io/sonarqube-operator/contributing/)
+covers the dev environment, project layout, a worked example for adding a CRD
+field, and the release process. The
+[Gotchas page](https://beirdinh0s.github.io/sonarqube-operator/contributing/gotchas/)
+lists non-obvious traps from past iterations — worth a read before touching
+the controllers.
+
+Run `make help` for the full list of `make` targets.
 
 ## License
 
@@ -132,4 +133,3 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-
