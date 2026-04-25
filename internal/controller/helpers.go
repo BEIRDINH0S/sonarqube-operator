@@ -29,6 +29,16 @@ import (
 	sonarqubev1alpha1 "github.com/BEIRDINH0S/sonarqube-operator/api/v1alpha1"
 )
 
+// instanceAPIURL returns the in-cluster URL the operator must use to call the
+// SonarQube HTTP API. It is always the internal Service URL — independent of
+// whether spec.ingress is enabled. The ingress is for external clients
+// (browsers, CI tools); internal API calls from the operator must go through
+// the cluster Service so they don't depend on cluster-external networking,
+// which is typically not reachable from inside the operator pod.
+func instanceAPIURL(instance *sonarqubev1alpha1.SonarQubeInstance) string {
+	return fmt.Sprintf("http://%s.%s:9000", instance.Name, instance.Namespace)
+}
+
 // getInstanceAdminToken lit le token Bearer admin depuis le Secret référencé par instance.Status.AdminTokenSecretRef.
 func getInstanceAdminToken(ctx context.Context, k8sClient client.Client, instance *sonarqubev1alpha1.SonarQubeInstance) (string, error) {
 	if instance.Status.AdminTokenSecretRef == "" {

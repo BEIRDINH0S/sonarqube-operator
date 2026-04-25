@@ -125,7 +125,7 @@ func (r *SonarQubePluginReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		_ = r.Status().Update(ctx, plugin)
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
-	sonarClient := r.NewSonarClient(instance.Status.URL, token)
+	sonarClient := r.NewSonarClient(instanceAPIURL(instance), token)
 
 	// Ajouter le finalizer si absent
 	if !controllerutil.ContainsFinalizer(plugin, pluginFinalizer) {
@@ -150,7 +150,7 @@ func (r *SonarQubePluginReconciler) finalizeDeletion(ctx context.Context, plugin
 
 	if instance.Status.Phase == phaseReady {
 		if token, err := getInstanceAdminToken(ctx, r.Client, instance); err == nil {
-			sonarClient := r.NewSonarClient(instance.Status.URL, token)
+			sonarClient := r.NewSonarClient(instanceAPIURL(instance), token)
 			return r.handleDeletion(ctx, plugin, sonarClient, instance)
 		}
 	}

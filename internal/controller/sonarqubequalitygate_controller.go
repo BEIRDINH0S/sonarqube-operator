@@ -122,7 +122,7 @@ func (r *SonarQubeQualityGateReconciler) Reconcile(ctx context.Context, req ctrl
 		_ = r.Status().Update(ctx, gate)
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
-	sonarClient := r.NewSonarClient(instance.Status.URL, token)
+	sonarClient := r.NewSonarClient(instanceAPIURL(instance), token)
 
 	if !controllerutil.ContainsFinalizer(gate, qualityGateFinalizer) {
 		controllerutil.AddFinalizer(gate, qualityGateFinalizer)
@@ -146,7 +146,7 @@ func (r *SonarQubeQualityGateReconciler) finalizeDeletion(ctx context.Context, g
 
 	if instance.Status.Phase == phaseReady {
 		if token, err := getInstanceAdminToken(ctx, r.Client, instance); err == nil {
-			sonarClient := r.NewSonarClient(instance.Status.URL, token)
+			sonarClient := r.NewSonarClient(instanceAPIURL(instance), token)
 			return r.handleDeletion(ctx, gate, sonarClient)
 		}
 	}
