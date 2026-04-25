@@ -57,6 +57,7 @@ type mockSonarClient struct {
 	assignQualityGateCalls int
 	generateTokenResult    *sonarqube.Token
 	generateTokenErr       error
+	revokeTokenCalls       int
 	// auth
 	validateAuthErr error
 	// quality gate
@@ -149,7 +150,10 @@ func (m *mockSonarClient) AssignQualityGate(_ context.Context, _, _ string) erro
 func (m *mockSonarClient) GenerateToken(_ context.Context, _, _, _ string) (*sonarqube.Token, error) {
 	return m.generateTokenResult, m.generateTokenErr
 }
-func (m *mockSonarClient) RevokeToken(_ context.Context, _ string) error { return nil }
+func (m *mockSonarClient) RevokeToken(_ context.Context, _ string) error {
+	m.revokeTokenCalls++
+	return nil
+}
 func (m *mockSonarClient) GetUser(_ context.Context, _ string) (*sonarqube.User, error) {
 	if m.getUserResult == nil {
 		return nil, sonarqube.ErrNotFound

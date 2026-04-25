@@ -179,42 +179,58 @@ func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, proje
 	return ctrl.Result{}, r.Status().Update(ctx, project)
 }
 
-// reconcileCIToken génère un token CI et le stocke dans un Secret Kubernetes.
-// Si le Secret existe déjà, il n'est pas regénéré (le token SonarQube n'est visible qu'à la création).
-// Si le Secret est absent, un nouveau token est généré.
+// reconcileCIToken ensures the CI token Secret is present and up to date.
+//
+// Rotation is triggered in two cases:
+//  1. The Secret was deleted manually — detected because the Get returns NotFound.
+//  2. The annotation "sonarqube.io/rotate-token: true" is set on the project.
+//
+// In both cases the previous SonarQube token is revoked by name (best-effort)
+// before a new one is generated, preventing orphaned tokens in SonarQube.
 func (r *SonarQubeProjectReconciler) reconcileCIToken(ctx context.Context, project *sonarqubev1alpha1.SonarQubeProject, instance *sonarqubev1alpha1.SonarQubeInstance, sonarClient sonarqube.Client) error {
 	secretName := project.Spec.CIToken.SecretName
 	if secretName == "" {
 		secretName = project.Name + "-ci-token"
 	}
+	// Token name is deterministic so we can always revoke by name.
+	tokenName := fmt.Sprintf("%s-ci-%s", project.Spec.Key, instance.Name)
+
+	forceRotate := project.Annotations[AnnotationRotateToken] == "true"
 
 	secret := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: project.Namespace}, secret)
-	if err == nil {
-		// Secret déjà présent → rien à faire
+	getErr := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: project.Namespace}, secret)
+	if getErr != nil && !errors.IsNotFound(getErr) {
+		return fmt.Errorf("checking CI token secret: %w", getErr)
+	}
+	secretExists := getErr == nil
+
+	if secretExists && !forceRotate {
 		project.Status.TokenSecretRef = secretName
 		return nil
 	}
-	if !errors.IsNotFound(err) {
-		return fmt.Errorf("checking CI token secret: %w", err)
+
+	// Revoke the old token in SonarQube (best-effort — it may not exist yet).
+	_ = sonarClient.RevokeToken(ctx, tokenName)
+
+	// Delete the old Secret if it still exists (force-rotate case).
+	if secretExists {
+		if err := r.Delete(ctx, secret); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("deleting old CI token secret: %w", err)
+		}
 	}
 
-	// Secret absent → générer un nouveau token dans SonarQube
-	tokenName := fmt.Sprintf("%s-ci-%s", project.Spec.Key, instance.Name)
+	// Generate a fresh token.
 	token, err := sonarClient.GenerateToken(ctx, tokenName, "PROJECT_ANALYSIS_TOKEN", project.Spec.Key)
 	if err != nil {
 		return fmt.Errorf("generating CI token: %w", err)
 	}
 
-	// Stocker le token dans un Secret Kubernetes
 	newSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
 			Namespace: project.Namespace,
 		},
-		Data: map[string][]byte{
-			"token": []byte(token.Token),
-		},
+		Data: map[string][]byte{"token": []byte(token.Token)},
 	}
 	if err := controllerutil.SetControllerReference(project, newSecret, r.Scheme); err != nil {
 		return err
@@ -223,9 +239,17 @@ func (r *SonarQubeProjectReconciler) reconcileCIToken(ctx context.Context, proje
 		return fmt.Errorf("creating CI token secret: %w", err)
 	}
 
+	// Remove the rotation annotation so the next reconciliation is a no-op.
+	if forceRotate {
+		delete(project.Annotations, AnnotationRotateToken)
+		if err := r.Update(ctx, project); err != nil {
+			return fmt.Errorf("removing rotation annotation: %w", err)
+		}
+	}
+
 	project.Status.TokenSecretRef = secretName
-	r.Recorder.Event(project, corev1.EventTypeNormal, "TokenCreated",
-		fmt.Sprintf("CI token stored in Secret %q", secretName))
+	r.Recorder.Event(project, corev1.EventTypeNormal, "TokenRotated",
+		fmt.Sprintf("CI token rotated and stored in Secret %q", secretName))
 	return nil
 }
 

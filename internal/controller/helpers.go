@@ -60,6 +60,11 @@ const (
 	phasePending     = "Pending"
 	phaseFailed      = "Failed"
 	phaseProgressing = "Progressing"
+
+	// AnnotationRotateToken triggers CI token rotation on the next reconciliation.
+	// Set to "true" on a SonarQubeProject to revoke the current token and generate a new one.
+	// The annotation is removed automatically after rotation.
+	AnnotationRotateToken = "sonarqube.io/rotate-token"
 )
 
 // podSpecHash calcule un hash SHA-256 de la PodSpec pour détecter les drifts sans reflect.DeepEqual.

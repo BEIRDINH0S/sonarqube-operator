@@ -238,6 +238,89 @@ var _ = Describe("SonarQubeProject Controller", func() {
 		Expect(mock.generateTokenResult).To(BeNil())
 	})
 
+	It("régénère le token CI quand le Secret a été supprimé manuellement", func() {
+		instanceName := "proj-instance-regen"
+		projectName := "proj-regen-token"
+		secretName := "proj-regen-token-ci-token"
+		nn := types.NamespacedName{Name: projectName, Namespace: "default"}
+		defer deleteProject(projectName)
+		defer deleteInstanceIfExists(instanceName)
+		defer func() {
+			s := &corev1.Secret{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: secretName, Namespace: "default"}, s); err == nil {
+				_ = k8sClient.Delete(ctx, s)
+			}
+		}()
+
+		newReadyInstance(ctx, instanceName)
+		p := newTestProject(projectName, instanceName, "proj-regen-key")
+		p.Spec.CIToken = sonarqubev1alpha1.CITokenSpec{Enabled: true}
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+
+		// No Secret exists → controller should revoke (best-effort) and generate a fresh token
+		mock := &mockSonarClient{
+			getProjectResult:    &sonarqube.Project{Key: "proj-regen-key", Visibility: "private"},
+			generateTokenResult: &sonarqube.Token{Token: "sqp_new123"},
+		}
+		_, err := newProjectReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(mock.revokeTokenCalls).To(Equal(1))
+		Expect(mock.generateTokenResult).NotTo(BeNil())
+
+		secret := &corev1.Secret{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: secretName, Namespace: "default"}, secret)).To(Succeed())
+		Expect(string(secret.Data["token"])).To(Equal("sqp_new123"))
+	})
+
+	It("force la rotation du token via l'annotation sonarqube.io/rotate-token", func() {
+		instanceName := "proj-instance-force-rotate"
+		projectName := "proj-force-rotate"
+		secretName := "proj-force-rotate-ci-token"
+		nn := types.NamespacedName{Name: projectName, Namespace: "default"}
+		defer deleteProject(projectName)
+		defer deleteInstanceIfExists(instanceName)
+		defer func() {
+			s := &corev1.Secret{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: secretName, Namespace: "default"}, s); err == nil {
+				_ = k8sClient.Delete(ctx, s)
+			}
+		}()
+
+		newReadyInstance(ctx, instanceName)
+		p := newTestProject(projectName, instanceName, "proj-force-key")
+		p.Spec.CIToken = sonarqubev1alpha1.CITokenSpec{Enabled: true}
+		p.Annotations = map[string]string{AnnotationRotateToken: "true"}
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+
+		// An old Secret already exists
+		oldSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "default"},
+			Data:       map[string][]byte{"token": []byte("sqp_old")},
+		}
+		Expect(k8sClient.Create(ctx, oldSecret)).To(Succeed())
+
+		mock := &mockSonarClient{
+			getProjectResult:    &sonarqube.Project{Key: "proj-force-key", Visibility: "private"},
+			generateTokenResult: &sonarqube.Token{Token: "sqp_rotated"},
+		}
+		_, err := newProjectReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		// Old token revoked, new one generated
+		Expect(mock.revokeTokenCalls).To(Equal(1))
+
+		// New Secret has the new token value
+		newSecret := &corev1.Secret{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: secretName, Namespace: "default"}, newSecret)).To(Succeed())
+		Expect(string(newSecret.Data["token"])).To(Equal("sqp_rotated"))
+
+		// Annotation must be removed
+		updated := &sonarqubev1alpha1.SonarQubeProject{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		Expect(updated.Annotations[AnnotationRotateToken]).To(BeEmpty())
+	})
+
 	It("supprime le projet SonarQube à la suppression de la ressource", func() {
 		instanceName := "proj-instance-delete"
 		projectName := "proj-delete"

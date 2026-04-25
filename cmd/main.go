@@ -232,6 +232,10 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "SonarQubeUser")
 		os.Exit(1)
 	}
+	if err := sonarqubev1alpha1.SetupSonarQubeInstanceWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create webhook", "webhook", "SonarQubeInstance")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
