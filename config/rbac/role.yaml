@@ -66,6 +66,7 @@ rules:
   resources:
   - sonarqubebackups
   - sonarqubebranchrules
+  - sonarqubegroups
   - sonarqubeinstances
   - sonarqubeplugins
   - sonarqubeprojects
@@ -84,6 +85,7 @@ rules:
   resources:
   - sonarqubebackups/finalizers
   - sonarqubebranchrules/finalizers
+  - sonarqubegroups/finalizers
   - sonarqubeinstances/finalizers
   - sonarqubeplugins/finalizers
   - sonarqubeprojects/finalizers
@@ -96,6 +98,7 @@ rules:
   resources:
   - sonarqubebackups/status
   - sonarqubebranchrules/status
+  - sonarqubegroups/status
   - sonarqubeinstances/status
   - sonarqubeplugins/status
   - sonarqubeprojects/status

@@ -160,6 +160,17 @@ type Client interface {
 	// RevokeUserToken revokes a token belonging to the specified user.
 	RevokeUserToken(ctx context.Context, login, name string) error
 
+	// Groups
+	// CreateGroup creates a SonarQube group. Returns ErrAlreadyExists if it
+	// already exists (the operator treats that as a no-op).
+	CreateGroup(ctx context.Context, name, description string) error
+	// GroupExists returns true when a group with this name is registered.
+	GroupExists(ctx context.Context, name string) (bool, error)
+	// UpdateGroupDescription updates a group's description.
+	UpdateGroupDescription(ctx context.Context, name, description string) error
+	// DeleteGroup removes a group by name.
+	DeleteGroup(ctx context.Context, name string) error
+
 	// Users
 	GetUser(ctx context.Context, login string) (*User, error)
 	CreateUser(ctx context.Context, login, name, email, password string) error
@@ -731,6 +742,51 @@ func (c *httpClient) RevokeUserToken(ctx context.Context, login, name string) er
 
 func (c *httpClient) RevokeToken(ctx context.Context, name string) error {
 	_, err := c.do(ctx, http.MethodPost, "/api/user_tokens/revoke", url.Values{"name": {name}})
+	return err
+}
+
+// --- Groups (lifecycle) ---
+
+func (c *httpClient) CreateGroup(ctx context.Context, name, description string) error {
+	params := url.Values{"name": {name}}
+	if description != "" {
+		params.Set("description", description)
+	}
+	_, err := c.do(ctx, http.MethodPost, "/api/user_groups/create", params)
+	return err
+}
+
+func (c *httpClient) GroupExists(ctx context.Context, name string) (bool, error) {
+	body, err := c.do(ctx, http.MethodGet, "/api/user_groups/search", url.Values{"q": {name}})
+	if err != nil {
+		return false, err
+	}
+	var result struct {
+		Groups []struct {
+			Name string `json:"name"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return false, err
+	}
+	for _, g := range result.Groups {
+		if g.Name == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (c *httpClient) UpdateGroupDescription(ctx context.Context, name, description string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/user_groups/update", url.Values{
+		"currentName": {name},
+		"description": {description},
+	})
+	return err
+}
+
+func (c *httpClient) DeleteGroup(ctx context.Context, name string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/user_groups/delete", url.Values{"name": {name}})
 	return err
 }
 
