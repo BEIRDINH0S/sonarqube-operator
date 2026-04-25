@@ -64,7 +64,11 @@ rules:
 - apiGroups:
   - sonarqube.sonarqube.io
   resources:
+<<<<<<< HEAD
   - sonarqubebackups
+=======
+  - sonarqubebranchrules
+>>>>>>> daa003c (feat: scaffold SonarQubeBranchRule CRD)
   - sonarqubeinstances
   - sonarqubeplugins
   - sonarqubeprojects
@@ -81,7 +85,11 @@ rules:
 - apiGroups:
   - sonarqube.sonarqube.io
   resources:
+<<<<<<< HEAD
   - sonarqubebackups/finalizers
+=======
+  - sonarqubebranchrules/finalizers
+>>>>>>> daa003c (feat: scaffold SonarQubeBranchRule CRD)
   - sonarqubeinstances/finalizers
   - sonarqubeplugins/finalizers
   - sonarqubeprojects/finalizers
@@ -92,7 +100,11 @@ rules:
 - apiGroups:
   - sonarqube.sonarqube.io
   resources:
+<<<<<<< HEAD
   - sonarqubebackups/status
+=======
+  - sonarqubebranchrules/status
+>>>>>>> daa003c (feat: scaffold SonarQubeBranchRule CRD)
   - sonarqubeinstances/status
   - sonarqubeplugins/status
   - sonarqubeprojects/status
