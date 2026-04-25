@@ -228,6 +228,41 @@ var _ = Describe("SonarQubeQualityGate Controller", func() {
 		Expect(mock.addConditionCalls).To(Equal(0))
 	})
 
+	It("synchronise en ajoutant et supprimant des conditions simultanément", func() {
+		instanceName := "qg-instance-mixed"
+		qgName := "qg-mixed-conditions"
+		nn := types.NamespacedName{Name: qgName, Namespace: "default"}
+		defer deleteQG(qgName)
+		defer deleteInstanceIfExists(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		// La spec définit coverage (présent) et new_reliability_rating (absent dans SonarQube)
+		g := newTestQualityGate(qgName, instanceName, "Gate Mixed")
+		g.Spec.Conditions = []sonarqubev1alpha1.QualityGateConditionSpec{
+			{Metric: "coverage", Operator: "LT", Value: "80"},
+			{Metric: "new_reliability_rating", Operator: "GT", Value: "1"},
+		}
+		Expect(k8sClient.Create(ctx, g)).To(Succeed())
+
+		// SonarQube a : coverage (à conserver) et duplicated_lines_density (à supprimer)
+		// new_reliability_rating est absent → doit être ajouté
+		mock := &mockSonarClient{
+			getQualityGateResult: &sonarqube.QualityGate{
+				ID:   "20",
+				Name: "Gate Mixed",
+				Conditions: []sonarqube.Condition{
+					{ID: "201", Metric: "coverage", Op: "LT", Error: "80"},
+					{ID: "202", Metric: "duplicated_lines_density", Op: "GT", Error: "3"},
+				},
+			},
+		}
+		_, err := newQualityGateReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(mock.removeConditionCalls).To(Equal(1)) // duplicated_lines_density supprimée
+		Expect(mock.addConditionCalls).To(Equal(1))    // new_reliability_rating ajoutée
+	})
+
 	It("définit le gate comme défaut si isDefault=true", func() {
 		instanceName := "qg-instance-default"
 		qgName := "qg-default"

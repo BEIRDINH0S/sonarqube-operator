@@ -24,7 +24,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 
 	sonarqubev1alpha1 "github.com/BEIRDINH0S/sonarqube-operator/api/v1alpha1"
 )
@@ -33,7 +32,7 @@ var _ = Describe("helpers", func() {
 	ctx := context.Background()
 
 	Describe("getInstanceAdminToken", func() {
-		It("returns error when AdminTokenSecretRef is empty", func() {
+		It("retourne une erreur si AdminTokenSecretRef est vide", func() {
 			instance := &sonarqubev1alpha1.SonarQubeInstance{
 				ObjectMeta: metav1.ObjectMeta{Name: "no-token-instance", Namespace: "default"},
 			}
@@ -42,7 +41,7 @@ var _ = Describe("helpers", func() {
 			Expect(err.Error()).To(ContainSubstring("no token secret"))
 		})
 
-		It("returns error when Secret does not exist", func() {
+		It("retourne une erreur si le Secret n'existe pas", func() {
 			instance := &sonarqubev1alpha1.SonarQubeInstance{
 				ObjectMeta: metav1.ObjectMeta{Name: "missing-secret-instance", Namespace: "default"},
 			}
@@ -52,7 +51,7 @@ var _ = Describe("helpers", func() {
 			Expect(err.Error()).To(ContainSubstring("getting admin token secret"))
 		})
 
-		It("returns error when Secret exists but token key is empty", func() {
+		It("retourne une erreur si la clé token du Secret est vide", func() {
 			secret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: "empty-token-secret", Namespace: "default"},
 				Data:       map[string][]byte{"token": []byte("")},
@@ -69,7 +68,7 @@ var _ = Describe("helpers", func() {
 			Expect(err.Error()).To(ContainSubstring("missing key 'token'"))
 		})
 
-		It("returns the token when Secret exists with valid token", func() {
+		It("retourne le token si le Secret existe avec une valeur valide", func() {
 			secret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: "valid-token-secret", Namespace: "default"},
 				Data:       map[string][]byte{"token": []byte("sqp_abc123")},
@@ -88,7 +87,7 @@ var _ = Describe("helpers", func() {
 	})
 
 	Describe("podSpecHash", func() {
-		It("returns the same hash for identical PodSpecs", func() {
+		It("retourne le même hash pour des PodSpecs identiques", func() {
 			spec := corev1.PodSpec{
 				Containers: []corev1.Container{
 					{Name: "sonarqube", Image: "sonarqube:10.3-community"},
@@ -97,7 +96,7 @@ var _ = Describe("helpers", func() {
 			Expect(podSpecHash(spec)).To(Equal(podSpecHash(spec)))
 		})
 
-		It("returns different hashes for different PodSpecs", func() {
+		It("retourne des hashes différents pour des PodSpecs différentes", func() {
 			spec1 := corev1.PodSpec{
 				Containers: []corev1.Container{{Name: "sonarqube", Image: "sonarqube:10.3-community"}},
 			}
@@ -107,7 +106,7 @@ var _ = Describe("helpers", func() {
 			Expect(podSpecHash(spec1)).NotTo(Equal(podSpecHash(spec2)))
 		})
 
-		It("returns the same hash regardless of resource quantity representation", func() {
+		It("retourne le même hash quelle que soit la représentation des quantités de ressources", func() {
 			spec1 := corev1.PodSpec{
 				Containers: []corev1.Container{{
 					Name: "sonarqube",
@@ -124,7 +123,7 @@ var _ = Describe("helpers", func() {
 	})
 
 	Describe("buildHeadlessService", func() {
-		It("creates a headless service with ClusterIP None", func() {
+		It("crée un service headless avec ClusterIP None", func() {
 			instance := newTestInstance("headless-test")
 			svc := buildHeadlessService(instance)
 			Expect(svc.Spec.ClusterIP).To(Equal("None"))
@@ -133,7 +132,7 @@ var _ = Describe("helpers", func() {
 			Expect(svc.Spec.Ports[0].Port).To(Equal(int32(9000)))
 		})
 
-		It("sets the correct labels and selector", func() {
+		It("positionne les bons labels et selector", func() {
 			instance := newTestInstance("headless-labels")
 			svc := buildHeadlessService(instance)
 			Expect(svc.Labels["instance"]).To(Equal("headless-labels"))
@@ -141,28 +140,4 @@ var _ = Describe("helpers", func() {
 		})
 	})
 
-	Describe("getInstanceAdminToken via k8sClient namespace lookup", func() {
-		It("uses the instance namespace to find the Secret", func() {
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{Name: "ns-token-secret", Namespace: "default"},
-				Data:       map[string][]byte{"token": []byte("sqp_ns_token")},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
-			defer func() { _ = k8sClient.Delete(ctx, secret) }()
-
-			instance := &sonarqubev1alpha1.SonarQubeInstance{}
-			instance.Name = "ns-instance"
-			instance.Namespace = "default"
-			instance.Status.AdminTokenSecretRef = "ns-token-secret"
-
-			// Verify it resolves using instance.Namespace
-			token, err := getInstanceAdminToken(ctx, k8sClient, instance)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(token).To(Equal("sqp_ns_token"))
-
-			// Cleanup check: Secret should still exist
-			s := &corev1.Secret{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "ns-token-secret", Namespace: "default"}, s)).To(Succeed())
-		})
-	})
 })

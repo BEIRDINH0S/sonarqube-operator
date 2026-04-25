@@ -60,6 +60,7 @@ func main() {
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
 	var enableLeaderElection bool
+	var enableWebhook bool
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
@@ -81,6 +82,8 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.BoolVar(&enableWebhook, "enable-webhook", false,
+		"If set, the validating webhook server will be started. Requires TLS certificates (e.g. via cert-manager).")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -232,9 +235,11 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "SonarQubeUser")
 		os.Exit(1)
 	}
-	if err := sonarqubev1alpha1.SetupSonarQubeInstanceWebhookWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create webhook", "webhook", "SonarQubeInstance")
-		os.Exit(1)
+	if enableWebhook {
+		if err := sonarqubev1alpha1.SetupSonarQubeInstanceWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "SonarQubeInstance")
+			os.Exit(1)
+		}
 	}
 	// +kubebuilder:scaffold:builder
 

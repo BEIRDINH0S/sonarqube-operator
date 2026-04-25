@@ -162,7 +162,7 @@ func TestGetProject_NotFound(t *testing.T) {
 
 	_, err := client.GetProject(context.Background(), "unknown")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	assert.ErrorIs(t, err, sonarqube.ErrNotFound)
 }
 
 func TestCreateQualityGate(t *testing.T) {

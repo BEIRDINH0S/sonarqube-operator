@@ -227,7 +227,7 @@ var _ = Describe("buildStatefulSet", func() {
 		Expect(requests[corev1.ResourceCPU]).To(Equal(resource.MustParse("500m")))
 	})
 
-	It("respects the resources specified in the spec", func() {
+	It("respecte les ressources spécifiées dans le spec", func() {
 		instance := newTestInstance("test")
 		instance.Spec.Resources = corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
@@ -405,7 +405,53 @@ var _ = Describe("SonarQubeInstance Controller (envtest)", func() {
 		Expect(updated.Status.AdminTokenSecretRef).To(Equal(name + "-admin-token"))
 	})
 
-	It("creates the admin token Secret on first startup when SonarQube is UP", func() {
+	It("reste en Progressing quand le changement du mot de passe admin échoue", func() {
+		name := "test-changepwd-fail"
+		nn := types.NamespacedName{Name: name, Namespace: "default"}
+		defer deleteInstance(name)
+		createAdminSecret()
+
+		Expect(k8sClient.Create(ctx, newTestInstance(name))).To(Succeed())
+
+		// ValidateAuth échoue → le contrôleur tente de changer le mot de passe
+		// ChangeAdminPassword échoue → initializeAdmin retourne une erreur → Progressing
+		mock := &mockSonarClient{
+			status:            "UP",
+			validateAuthErr:   fmt.Errorf("unauthorized"),
+			changePasswordErr: fmt.Errorf("cannot change password"),
+		}
+		result, err := newTestReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(requeueAfterHealthCheck))
+
+		updated := &sonarqubev1alpha1.SonarQubeInstance{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(phaseProgressing))
+	})
+
+	It("reste en Progressing quand la génération du token admin échoue", func() {
+		name := "test-gentoken-fail"
+		nn := types.NamespacedName{Name: name, Namespace: "default"}
+		defer deleteInstance(name)
+		createAdminSecret()
+
+		Expect(k8sClient.Create(ctx, newTestInstance(name))).To(Succeed())
+
+		// ValidateAuth réussit (mot de passe déjà changé) → GenerateToken échoue → Progressing
+		mock := &mockSonarClient{
+			status:           "UP",
+			generateTokenErr: fmt.Errorf("quota exceeded"),
+		}
+		result, err := newTestReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(requeueAfterHealthCheck))
+
+		updated := &sonarqubev1alpha1.SonarQubeInstance{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(phaseProgressing))
+	})
+
+	It("crée le Secret du token admin au premier démarrage quand SonarQube est UP", func() {
 		name := "test-firstboot"
 		nn := types.NamespacedName{Name: name, Namespace: "default"}
 		defer deleteInstance(name)

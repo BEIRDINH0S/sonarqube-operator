@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -77,7 +78,7 @@ var _ = Describe("SonarQubeUser Controller", func() {
 		}
 	}
 
-	It("creates the user if it does not exist in SonarQube", func() {
+	It("crée l'utilisateur s'il n'existe pas dans SonarQube", func() {
 		instanceName := "user-instance-create"
 		userName := "user-create"
 		nn := types.NamespacedName{Name: userName, Namespace: "default"}
@@ -99,7 +100,7 @@ var _ = Describe("SonarQubeUser Controller", func() {
 		Expect(updated.Status.Active).To(BeTrue())
 	})
 
-	It("does not recreate the user if it already exists", func() {
+	It("ne recrée pas l'utilisateur s'il existe déjà", func() {
 		instanceName := "user-instance-exists"
 		userName := "user-exists"
 		nn := types.NamespacedName{Name: userName, Namespace: "default"}
@@ -122,7 +123,7 @@ var _ = Describe("SonarQubeUser Controller", func() {
 		Expect(updated.Status.Phase).To(Equal(conditionReady))
 	})
 
-	It("updates the user when name or email drifts", func() {
+	It("met à jour l'utilisateur si le nom ou l'email a drifté", func() {
 		instanceName := "user-instance-drift"
 		userName := "user-drift"
 		nn := types.NamespacedName{Name: userName, Namespace: "default"}
@@ -145,7 +146,7 @@ var _ = Describe("SonarQubeUser Controller", func() {
 		Expect(mock.createUserCalls).To(Equal(0))
 	})
 
-	It("reads the password from the referenced Secret when creating", func() {
+	It("lit le mot de passe depuis le Secret référencé lors de la création", func() {
 		instanceName := "user-instance-pwd"
 		userName := "user-with-password"
 		nn := types.NamespacedName{Name: userName, Namespace: "default"}
@@ -171,7 +172,7 @@ var _ = Describe("SonarQubeUser Controller", func() {
 		Expect(mock.createUserCalls).To(Equal(1))
 	})
 
-	It("deactivates the user on deletion", func() {
+	It("désactive l'utilisateur lors de la suppression", func() {
 		instanceName := "user-instance-delete"
 		userName := "user-delete"
 		nn := types.NamespacedName{Name: userName, Namespace: "default"}
@@ -190,7 +191,7 @@ var _ = Describe("SonarQubeUser Controller", func() {
 		Expect(mock.deactivateUserCalls).To(Equal(1))
 	})
 
-	It("requeues when the instance is not yet ready", func() {
+	It("requeue quand l'instance n'est pas encore Ready", func() {
 		instanceName := "user-instance-notready"
 		userName := "user-notready"
 		nn := types.NamespacedName{Name: userName, Namespace: "default"}
@@ -207,5 +208,27 @@ var _ = Describe("SonarQubeUser Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result.RequeueAfter).To(Equal(requeueAfterHealthCheck))
 		Expect(mock.createUserCalls).To(Equal(0))
+	})
+
+	It("passe en Failed et retourne une erreur quand la création de l'utilisateur échoue", func() {
+		instanceName := "user-instance-createfail"
+		userName := "user-createfail"
+		nn := types.NamespacedName{Name: userName, Namespace: "default"}
+		defer deleteUser(userName)
+		defer deleteInstanceIfExists(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		Expect(k8sClient.Create(ctx, newTestUser(userName, instanceName, "fail.user"))).To(Succeed())
+
+		mock := &mockSonarClient{
+			createUserErr: fmt.Errorf("user already exists in LDAP"),
+		}
+		_, err := newUserReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("creating user"))
+
+		updated := &sonarqubev1alpha1.SonarQubeUser{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(phaseFailed))
 	})
 })

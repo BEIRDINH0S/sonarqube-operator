@@ -46,7 +46,7 @@ func newPluginReconciler(mock *mockSonarClient) *SonarQubePluginReconciler {
 // newReadyInstance crée une SonarQubeInstance déjà en phase Ready dans le cluster.
 func newReadyInstance(ctx context.Context, name string) {
 	instance := newTestInstance(name)
-	_ = k8sClient.Create(ctx, instance)
+	Expect(k8sClient.Create(ctx, instance)).To(Succeed())
 
 	// Créer le Secret admin token requis par les contrôleurs enfants
 	tokenSecretName := name + "-admin-token"
@@ -54,12 +54,12 @@ func newReadyInstance(ctx context.Context, name string) {
 		ObjectMeta: metav1.ObjectMeta{Name: tokenSecretName, Namespace: "default"},
 		Data:       map[string][]byte{"token": []byte("sqa_test_token")},
 	}
-	_ = k8sClient.Create(ctx, tokenSecret)
+	Expect(k8sClient.Create(ctx, tokenSecret)).To(Succeed())
 
 	instance.Status.Phase = conditionReady
 	instance.Status.URL = "http://" + name + ".default:9000"
 	instance.Status.AdminTokenSecretRef = tokenSecretName
-	_ = k8sClient.Status().Update(ctx, instance)
+	Expect(k8sClient.Status().Update(ctx, instance)).To(Succeed())
 }
 
 // newTestPlugin crée un SonarQubePlugin minimal pour les tests.
