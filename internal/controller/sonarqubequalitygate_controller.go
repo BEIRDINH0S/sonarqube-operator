@@ -92,7 +92,7 @@ func (r *SonarQubeQualityGateReconciler) Reconcile(ctx context.Context, req ctrl
 		return ctrl.Result{}, nil
 	}
 
-	if instance.Status.Phase != conditionReady {
+	if instance.Status.Phase != phaseReady {
 		log.Info("Instance not ready, requeueing", "instance", instance.Name)
 		gate.Status.Phase = phasePending
 		apimeta.SetStatusCondition(&gate.Status.Conditions, metav1.Condition{
@@ -193,7 +193,7 @@ func (r *SonarQubeQualityGateReconciler) reconcileQualityGate(ctx context.Contex
 		}
 	}
 
-	gate.Status.Phase = conditionReady
+	gate.Status.Phase = phaseReady
 	gate.Status.GateID = gateID
 	apimeta.SetStatusCondition(&gate.Status.Conditions, metav1.Condition{
 		Type:               conditionReady,

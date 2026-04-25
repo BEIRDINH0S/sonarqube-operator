@@ -56,7 +56,7 @@ func newReadyInstance(ctx context.Context, name string) {
 	}
 	Expect(k8sClient.Create(ctx, tokenSecret)).To(Succeed())
 
-	instance.Status.Phase = conditionReady
+	instance.Status.Phase = phaseReady
 	instance.Status.URL = "http://" + name + ".default:9000"
 	instance.Status.AdminTokenSecretRef = tokenSecretName
 	Expect(k8sClient.Status().Update(ctx, instance)).To(Succeed())
@@ -136,10 +136,15 @@ var _ = Describe("SonarQubePlugin Controller", func() {
 		Expect(mock.lastInstalledKey).To(Equal("sonar-java"))
 		Expect(mock.lastInstalledVersion).To(Equal("7.30.1"))
 
-		updated := &sonarqubev1alpha1.SonarQubePlugin{}
-		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
-		Expect(updated.Status.Phase).To(Equal("Installed"))
-		Expect(updated.Status.RestartRequired).To(BeFalse())
+		updatedPlugin := &sonarqubev1alpha1.SonarQubePlugin{}
+		Expect(k8sClient.Get(ctx, nn, updatedPlugin)).To(Succeed())
+		Expect(updatedPlugin.Status.Phase).To(Equal("Installed"))
+		Expect(updatedPlugin.Status.RestartRequired).To(BeTrue())
+
+		// L'instance doit avoir RestartRequired = true (délégation du restart)
+		updatedInstance := &sonarqubev1alpha1.SonarQubeInstance{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: instanceName, Namespace: "default"}, updatedInstance)).To(Succeed())
+		Expect(updatedInstance.Status.RestartRequired).To(BeTrue())
 	})
 
 	It("ne fait rien si le plugin est déjà installé avec la bonne version", func() {

@@ -91,7 +91,7 @@ func (r *SonarQubeUserReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, nil
 	}
 
-	if instance.Status.Phase != conditionReady {
+	if instance.Status.Phase != phaseReady {
 		log.Info("Instance not ready, requeueing", "instance", instance.Name)
 		user.Status.Phase = phasePending
 		apimeta.SetStatusCondition(&user.Status.Conditions, metav1.Condition{
@@ -158,7 +158,7 @@ func (r *SonarQubeUserReconciler) reconcileUser(ctx context.Context, user *sonar
 		return ctrl.Result{}, err
 	}
 
-	user.Status.Phase = conditionReady
+	user.Status.Phase = phaseReady
 	user.Status.Active = existing.Active
 	apimeta.SetStatusCondition(&user.Status.Conditions, metav1.Condition{
 		Type:               conditionReady,
@@ -207,7 +207,7 @@ func (r *SonarQubeUserReconciler) createUser(ctx context.Context, user *sonarqub
 		return ctrl.Result{}, err
 	}
 
-	user.Status.Phase = conditionReady
+	user.Status.Phase = phaseReady
 	user.Status.Active = true
 	apimeta.SetStatusCondition(&user.Status.Conditions, metav1.Condition{
 		Type:               conditionReady,

@@ -11,7 +11,7 @@ webhooks:
       name: webhook-service
       namespace: system
       path: /validate-sonarqube-sonarqube-io-v1alpha1-sonarqubeinstance
-  failurePolicy: Fail
+  failurePolicy: Ignore
   name: vsonarqubeinstance.kb.io
   rules:
   - apiGroups:

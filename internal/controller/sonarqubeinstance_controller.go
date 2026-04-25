@@ -24,6 +24,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -47,6 +48,7 @@ import (
 const (
 	defaultAdminPassword    = "admin"
 	requeueAfterHealthCheck = 30 * time.Second
+	requeueAfterReady       = 1 * time.Minute
 )
 
 // SonarQubeInstanceReconciler reconciles a SonarQubeInstance object
@@ -110,12 +112,16 @@ func (r *SonarQubeInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	serviceURL := fmt.Sprintf("http://%s.%s:9000", instance.Name, instance.Namespace)
 	result := r.reconcileHealth(ctx, instance, serviceURL)
 
-	instance.Status.URL = serviceURL
+	if instance.Spec.Ingress.Enabled && instance.Spec.Ingress.Host != "" {
+		instance.Status.URL = "http://" + instance.Spec.Ingress.Host
+	} else {
+		instance.Status.URL = serviceURL
+	}
 	if err := r.Status().Update(ctx, instance); err != nil {
 		return ctrl.Result{}, fmt.Errorf("updating status: %w", err)
 	}
 
-	if instance.Status.Phase == conditionReady {
+	if instance.Status.Phase == phaseReady {
 		metrics.InstanceReady.WithLabelValues(instance.Namespace, instance.Name).Set(1)
 	} else {
 		metrics.InstanceReady.WithLabelValues(instance.Namespace, instance.Name).Set(0)
@@ -178,7 +184,32 @@ func (r *SonarQubeInstanceReconciler) reconcileHealth(ctx context.Context, insta
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}
 	}
 
-	instance.Status.Phase = conditionReady
+	// If any plugin was installed or removed since the last reconcile, restart SonarQube
+	// to activate the changes. The plugin controller sets this flag; we clear it here.
+	if instance.Status.RestartRequired {
+		token, tokenErr := getInstanceAdminToken(ctx, r.Client, instance)
+		if tokenErr == nil {
+			sonarClient := r.NewSonarClient(serviceURL, token)
+			if restartErr := sonarClient.Restart(ctx); restartErr != nil {
+				r.Recorder.Event(instance, corev1.EventTypeWarning, "RestartFailed", restartErr.Error())
+			} else {
+				r.Recorder.Event(instance, corev1.EventTypeNormal, "Restarted",
+					"SonarQube restarted to activate plugin changes")
+				instance.Status.RestartRequired = false
+			}
+		}
+		instance.Status.Phase = phaseProgressing
+		apimeta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+			Type:               conditionReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "Restarting",
+			Message:            "SonarQube restarting to activate plugin changes",
+			ObservedGeneration: instance.Generation,
+		})
+		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}
+	}
+
+	instance.Status.Phase = phaseReady
 	apimeta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
 		Type:               conditionReady,
 		Status:             metav1.ConditionTrue,
@@ -187,7 +218,8 @@ func (r *SonarQubeInstanceReconciler) reconcileHealth(ctx context.Context, insta
 		ObservedGeneration: instance.Generation,
 	})
 	r.Recorder.Event(instance, corev1.EventTypeNormal, "Ready", "SonarQube instance is ready")
-	return ctrl.Result{}
+	// Periodic health recheck: detect runtime failures (OOM, DB outage) even without k8s events.
+	return ctrl.Result{RequeueAfter: requeueAfterReady}
 }
 
 // adminTokenSecretName retourne le nom du Secret qui stocke le token Bearer de l'admin.
@@ -278,14 +310,17 @@ func (r *SonarQubeInstanceReconciler) initializeAdmin(ctx context.Context, insta
 }
 
 func (r *SonarQubeInstanceReconciler) reconcileStatefulSet(ctx context.Context, instance *sonarqubev1alpha1.SonarQubeInstance) error {
-	desired := r.buildStatefulSet(instance)
+	desired, err := r.buildStatefulSet(instance)
+	if err != nil {
+		return fmt.Errorf("building StatefulSet: %w", err)
+	}
 
 	if err := controllerutil.SetControllerReference(instance, desired, r.Scheme); err != nil {
 		return err
 	}
 
 	existing := &appsv1.StatefulSet{}
-	err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
+	err = r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
 	if errors.IsNotFound(err) {
 		r.Recorder.Event(instance, corev1.EventTypeNormal, "StatefulSetCreated", "StatefulSet created")
 		return r.Create(ctx, desired)
@@ -294,10 +329,7 @@ func (r *SonarQubeInstanceReconciler) reconcileStatefulSet(ctx context.Context, 
 		return err
 	}
 
-	// Mettre à jour uniquement si le contenu change pour éviter un Update toutes les 30s
-	desiredHash := podSpecHash(desired.Spec.Template.Spec)
-	existingHash := podSpecHash(existing.Spec.Template.Spec)
-	if desiredHash == existingHash {
+	if equality.Semantic.DeepEqual(desired.Spec.Template.Spec, existing.Spec.Template.Spec) {
 		return nil
 	}
 
@@ -369,7 +401,7 @@ func (r *SonarQubeInstanceReconciler) reconcileIngress(ctx context.Context, inst
 	return r.Update(ctx, existing)
 }
 
-func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alpha1.SonarQubeInstance) *appsv1.StatefulSet {
+func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alpha1.SonarQubeInstance) (*appsv1.StatefulSet, error) {
 	image := fmt.Sprintf("sonarqube:%s-%s", instance.Spec.Version, instance.Spec.Edition)
 	labels := map[string]string{"app": "sonarqube", "instance": instance.Name}
 
@@ -390,6 +422,15 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 		extensionsSize = "1Gi"
 	}
 
+	storageSizeQty, err := resource.ParseQuantity(storageSize)
+	if err != nil {
+		return nil, fmt.Errorf("invalid persistence.size %q: %w", storageSize, err)
+	}
+	extensionsSizeQty, err := resource.ParseQuantity(extensionsSize)
+	if err != nil {
+		return nil, fmt.Errorf("invalid persistence.extensionsSize %q: %w", extensionsSize, err)
+	}
+
 	var storageClassName *string
 	if instance.Spec.Persistence.StorageClass != "" {
 		sc := instance.Spec.Persistence.StorageClass
@@ -397,9 +438,27 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 	}
 
 	replicas := int32(1)
-
-	privileged := true
 	fsGroup := int64(1000)
+
+	var initContainers []corev1.Container
+	if !instance.Spec.SkipSysctlInit {
+		// Embedded Elasticsearch requires vm.max_map_count >= 524288.
+		// This init container sets the kernel parameter before the pod starts.
+		// Disable with spec.skipSysctlInit=true on clusters where vm.max_map_count
+		// is already configured (GKE Autopilot, OpenShift MachineConfig, etc.)
+		// because PSA restricted mode rejects privileged containers.
+		privileged := true
+		initContainers = []corev1.Container{
+			{
+				Name:    "sysctl",
+				Image:   "busybox:1.36",
+				Command: []string{"sysctl", "-w", "vm.max_map_count=524288"},
+				SecurityContext: &corev1.SecurityContext{
+					Privileged: &privileged,
+				},
+			},
+		}
+	}
 
 	return &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
@@ -414,23 +473,12 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
-					// fsGroup 1000 correspond à l'UID de l'image sonarqube officielle.
-					// Without this, the mounted PVC is root:root and SonarQube crashes on startup.
+					// fsGroup 1000 matches the UID of the official sonarqube image.
+					// Without this the mounted PVC is root:root and SonarQube crashes on startup.
 					SecurityContext: &corev1.PodSecurityContext{
 						FSGroup: &fsGroup,
 					},
-					// Elasticsearch embarqué dans SonarQube exige vm.max_map_count >= 524288.
-					// Ce init container règle le paramètre noyau avant que le pod démarre.
-					InitContainers: []corev1.Container{
-						{
-							Name:    "sysctl",
-							Image:   "busybox:1.36",
-							Command: []string{"sysctl", "-w", "vm.max_map_count=524288"},
-							SecurityContext: &corev1.SecurityContext{
-								Privileged: &privileged,
-							},
-						},
-					},
+					InitContainers: initContainers,
 					Containers: []corev1.Container{
 						{
 							Name:      "sonarqube",
@@ -441,7 +489,6 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 							},
 							Env: r.buildEnvVars(instance),
 							// startupProbe allows up to 10 min for initial startup (Elasticsearch + DB migrations).
-							// Une fois SonarQube UP, readiness et liveness prennent le relais rapidement.
 							StartupProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									HTTPGet: &corev1.HTTPGetAction{
@@ -488,7 +535,7 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 						StorageClassName: storageClassName,
 						Resources: corev1.VolumeResourceRequirements{
 							Requests: corev1.ResourceList{
-								corev1.ResourceStorage: resource.MustParse(storageSize),
+								corev1.ResourceStorage: storageSizeQty,
 							},
 						},
 					},
@@ -500,14 +547,14 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 						StorageClassName: storageClassName,
 						Resources: corev1.VolumeResourceRequirements{
 							Requests: corev1.ResourceList{
-								corev1.ResourceStorage: resource.MustParse(extensionsSize),
+								corev1.ResourceStorage: extensionsSizeQty,
 							},
 						},
 					},
 				},
 			},
 		},
-	}
+	}, nil
 }
 
 func (r *SonarQubeInstanceReconciler) buildEnvVars(instance *sonarqubev1alpha1.SonarQubeInstance) []corev1.EnvVar {

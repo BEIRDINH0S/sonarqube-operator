@@ -119,11 +119,13 @@ spec:
                     default: 1Gi
                     description: extensionsSize is the requested storage size for
                       the plugins/extensions directory (e.g. "1Gi").
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     type: string
                   size:
                     default: 10Gi
                     description: size is the requested storage size for the data directory
                       (e.g. "10Gi").
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     type: string
                   storageClass:
                     description: storageClass is the name of the StorageClass to use
@@ -190,6 +192,13 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              skipSysctlInit:
+                description: |-
+                  skipSysctlInit disables the privileged init container that sets vm.max_map_count.
+                  Enable on clusters where this sysctls is already configured via a DaemonSet or node
+                  tuning (e.g. GKE Autopilot, OpenShift with MachineConfig, hardened AKS nodes).
+                  Without vm.max_map_count >= 524288, the embedded Elasticsearch will fail to start.
+                type: boolean
               version:
                 description: version is the SonarQube image tag to deploy (e.g. "10.3").
                 minLength: 1
@@ -276,6 +285,11 @@ spec:
                 - Ready
                 - Degraded
                 type: string
+              restartRequired:
+                description: |-
+                  restartRequired is set to true by the plugin controller after a plugin install or uninstall.
+                  The instance controller picks it up, triggers a SonarQube restart, and clears this flag.
+                type: boolean
               url:
                 description: url is the internal cluster URL of the SonarQube service.
                 type: string

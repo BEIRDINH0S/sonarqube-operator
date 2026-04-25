@@ -231,13 +231,15 @@ var _ = Describe("buildStatefulSet", func() {
 
 	It("construit l'image depuis edition et version", func() {
 		instance := newTestInstance("test")
-		sts := r.buildStatefulSet(instance)
+		sts, err := r.buildStatefulSet(instance)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(sts.Spec.Template.Spec.Containers[0].Image).To(Equal("sonarqube:10.3-community"))
 	})
 
 	It("applique les ressources par défaut si non spécifiées", func() {
 		instance := newTestInstance("test")
-		sts := r.buildStatefulSet(instance)
+		sts, err := r.buildStatefulSet(instance)
+		Expect(err).NotTo(HaveOccurred())
 		requests := sts.Spec.Template.Spec.Containers[0].Resources.Requests
 		Expect(requests[corev1.ResourceMemory]).To(Equal(resource.MustParse("2Gi")))
 		Expect(requests[corev1.ResourceCPU]).To(Equal(resource.MustParse("500m")))
@@ -251,14 +253,16 @@ var _ = Describe("buildStatefulSet", func() {
 				corev1.ResourceCPU:    resource.MustParse("1"),
 			},
 		}
-		sts := r.buildStatefulSet(instance)
+		sts, err := r.buildStatefulSet(instance)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(sts.Spec.Template.Spec.Containers[0].Resources.Requests[corev1.ResourceMemory]).
 			To(Equal(resource.MustParse("4Gi")))
 	})
 
 	It("construit l'URL JDBC correctement", func() {
 		instance := newTestInstance("test")
-		sts := r.buildStatefulSet(instance)
+		sts, err := r.buildStatefulSet(instance)
+		Expect(err).NotTo(HaveOccurred())
 		var jdbcURL string
 		for _, e := range sts.Spec.Template.Spec.Containers[0].Env {
 			if e.Name == "SONAR_JDBC_URL" {
@@ -270,7 +274,8 @@ var _ = Describe("buildStatefulSet", func() {
 
 	It("monte le PVC data sur /opt/sonarqube/data", func() {
 		instance := newTestInstance("test")
-		sts := r.buildStatefulSet(instance)
+		sts, err := r.buildStatefulSet(instance)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(sts.Spec.Template.Spec.Containers[0].VolumeMounts).To(ContainElement(corev1.VolumeMount{
 			Name:      "data",
 			MountPath: "/opt/sonarqube/data",
@@ -279,14 +284,16 @@ var _ = Describe("buildStatefulSet", func() {
 
 	It("utilise la taille de persistence par défaut si non spécifiée", func() {
 		instance := newTestInstance("test")
-		sts := r.buildStatefulSet(instance)
+		sts, err := r.buildStatefulSet(instance)
+		Expect(err).NotTo(HaveOccurred())
 		storage := sts.Spec.VolumeClaimTemplates[0].Spec.Resources.Requests[corev1.ResourceStorage]
 		Expect(storage).To(Equal(resource.MustParse("10Gi")))
 	})
 
 	It("monte le PVC extensions sur /opt/sonarqube/extensions", func() {
 		instance := newTestInstance("test")
-		sts := r.buildStatefulSet(instance)
+		sts, err := r.buildStatefulSet(instance)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(sts.Spec.Template.Spec.Containers[0].VolumeMounts).To(ContainElement(corev1.VolumeMount{
 			Name:      "extensions",
 			MountPath: "/opt/sonarqube/extensions",
@@ -299,7 +306,8 @@ var _ = Describe("buildStatefulSet", func() {
 	It("transmet jvmOptions en variable d'environnement", func() {
 		instance := newTestInstance("test")
 		instance.Spec.JvmOptions = "-Xmx4g -Xms1g"
-		sts := r.buildStatefulSet(instance)
+		sts, err := r.buildStatefulSet(instance)
+		Expect(err).NotTo(HaveOccurred())
 		var found string
 		for _, e := range sts.Spec.Template.Spec.Containers[0].Env {
 			if e.Name == "SONAR_WEB_JAVAADDITIONALOPTS" {
@@ -307,6 +315,38 @@ var _ = Describe("buildStatefulSet", func() {
 			}
 		}
 		Expect(found).To(Equal("-Xmx4g -Xms1g"))
+	})
+
+	It("inclut l'init container sysctl par défaut", func() {
+		instance := newTestInstance("test")
+		sts, err := r.buildStatefulSet(instance)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sts.Spec.Template.Spec.InitContainers).To(HaveLen(1))
+		Expect(sts.Spec.Template.Spec.InitContainers[0].Name).To(Equal("sysctl"))
+	})
+
+	It("supprime l'init container sysctl si skipSysctlInit est activé", func() {
+		instance := newTestInstance("test")
+		instance.Spec.SkipSysctlInit = true
+		sts, err := r.buildStatefulSet(instance)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sts.Spec.Template.Spec.InitContainers).To(BeEmpty())
+	})
+
+	It("retourne une erreur si persistence.size est invalide", func() {
+		instance := newTestInstance("test")
+		instance.Spec.Persistence.Size = "10 Go"
+		_, err := r.buildStatefulSet(instance)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("invalid persistence.size"))
+	})
+
+	It("retourne une erreur si persistence.extensionsSize est invalide", func() {
+		instance := newTestInstance("test")
+		instance.Spec.Persistence.ExtensionsSize = "not-a-quantity"
+		_, err := r.buildStatefulSet(instance)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("invalid persistence.extensionsSize"))
 	})
 })
 
@@ -491,6 +531,113 @@ var _ = Describe("SonarQubeInstance Controller (envtest)", func() {
 		updated := &sonarqubev1alpha1.SonarQubeInstance{}
 		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 		Expect(updated.Status.AdminTokenSecretRef).To(Equal(name + "-admin-token"))
-		Expect(updated.Status.Phase).To(Equal("Ready"))
+		Expect(updated.Status.Phase).To(Equal(phaseReady))
+	})
+
+	It("requeue périodiquement même quand l'instance est Ready", func() {
+		name := "test-periodic-requeue"
+		nn := types.NamespacedName{Name: name, Namespace: "default"}
+		defer deleteInstance(name)
+
+		Expect(k8sClient.Create(ctx, newTestInstance(name))).To(Succeed())
+
+		tokenSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: name + "-admin-token", Namespace: "default"},
+			Data:       map[string][]byte{"token": []byte("sqa_tok")},
+		}
+		Expect(k8sClient.Create(ctx, tokenSecret)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, tokenSecret) }()
+
+		mock := &mockSonarClient{status: "UP", statusVersion: "10.3"}
+		result, err := newTestReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(requeueAfterReady))
+
+		updated := &sonarqubev1alpha1.SonarQubeInstance{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(phaseReady))
+	})
+
+	It("expose l'URL Ingress dans Status.URL quand l'ingress est activé", func() {
+		name := "test-ingress-url"
+		nn := types.NamespacedName{Name: name, Namespace: "default"}
+		defer deleteInstance(name)
+
+		instance := newTestInstance(name)
+		instance.Spec.Ingress = sonarqubev1alpha1.IngressSpec{
+			Enabled: true,
+			Host:    "sonarqube.example.com",
+		}
+		Expect(k8sClient.Create(ctx, instance)).To(Succeed())
+
+		tokenSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: name + "-admin-token", Namespace: "default"},
+			Data:       map[string][]byte{"token": []byte("sqa_tok")},
+		}
+		Expect(k8sClient.Create(ctx, tokenSecret)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, tokenSecret) }()
+
+		mock := &mockSonarClient{status: "UP", statusVersion: "10.3"}
+		_, err := newTestReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		updated := &sonarqubev1alpha1.SonarQubeInstance{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		Expect(updated.Status.URL).To(Equal("http://sonarqube.example.com"))
+	})
+
+	It("expose l'URL interne dans Status.URL quand l'ingress est désactivé", func() {
+		name := "test-internal-url"
+		nn := types.NamespacedName{Name: name, Namespace: "default"}
+		defer deleteInstance(name)
+
+		Expect(k8sClient.Create(ctx, newTestInstance(name))).To(Succeed())
+
+		tokenSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: name + "-admin-token", Namespace: "default"},
+			Data:       map[string][]byte{"token": []byte("sqa_tok")},
+		}
+		Expect(k8sClient.Create(ctx, tokenSecret)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, tokenSecret) }()
+
+		mock := &mockSonarClient{status: "UP", statusVersion: "10.3"}
+		_, err := newTestReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		updated := &sonarqubev1alpha1.SonarQubeInstance{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		Expect(updated.Status.URL).To(Equal(fmt.Sprintf("http://%s.default:9000", name)))
+	})
+
+	It("déclenche un redémarrage et passe en Progressing quand RestartRequired est vrai", func() {
+		name := "test-restart-required"
+		nn := types.NamespacedName{Name: name, Namespace: "default"}
+		defer deleteInstance(name)
+
+		Expect(k8sClient.Create(ctx, newTestInstance(name))).To(Succeed())
+
+		tokenSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: name + "-admin-token", Namespace: "default"},
+			Data:       map[string][]byte{"token": []byte("sqa_tok")},
+		}
+		Expect(k8sClient.Create(ctx, tokenSecret)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, tokenSecret) }()
+
+		// Simuler un plugin installé qui a levé le flag RestartRequired
+		instance := &sonarqubev1alpha1.SonarQubeInstance{}
+		Expect(k8sClient.Get(ctx, nn, instance)).To(Succeed())
+		instance.Status.AdminTokenSecretRef = name + "-admin-token"
+		instance.Status.RestartRequired = true
+		Expect(k8sClient.Status().Update(ctx, instance)).To(Succeed())
+
+		mock := &mockSonarClient{status: "UP"}
+		result, err := newTestReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(requeueAfterHealthCheck))
+
+		updated := &sonarqubev1alpha1.SonarQubeInstance{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(phaseProgressing))
+		Expect(updated.Status.RestartRequired).To(BeFalse())
 	})
 })

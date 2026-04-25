@@ -54,6 +54,13 @@ type SonarQubeInstanceSpec struct {
 	// jvmOptions are extra JVM flags passed to SonarQube (e.g. "-Xmx2g -Xms1g").
 	// +optional
 	JvmOptions string `json:"jvmOptions,omitempty"`
+
+	// skipSysctlInit disables the privileged init container that sets vm.max_map_count.
+	// Enable on clusters where this sysctls is already configured via a DaemonSet or node
+	// tuning (e.g. GKE Autopilot, OpenShift with MachineConfig, hardened AKS nodes).
+	// Without vm.max_map_count >= 524288, the embedded Elasticsearch will fail to start.
+	// +optional
+	SkipSysctlInit bool `json:"skipSysctlInit,omitempty"`
 }
 
 // DatabaseSpec holds the PostgreSQL connection configuration.
@@ -80,10 +87,12 @@ type DatabaseSpec struct {
 type PersistenceSpec struct {
 	// size is the requested storage size for the data directory (e.g. "10Gi").
 	// +kubebuilder:default="10Gi"
+	// +kubebuilder:validation:Pattern=`^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$`
 	Size string `json:"size,omitempty"`
 
 	// extensionsSize is the requested storage size for the plugins/extensions directory (e.g. "1Gi").
 	// +kubebuilder:default="1Gi"
+	// +kubebuilder:validation:Pattern=`^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$`
 	ExtensionsSize string `json:"extensionsSize,omitempty"`
 
 	// storageClass is the name of the StorageClass to use for both PVCs.
@@ -125,6 +134,11 @@ type SonarQubeInstanceStatus struct {
 	// Set once the admin password has been initialized.
 	// +optional
 	AdminTokenSecretRef string `json:"adminTokenSecretRef,omitempty"`
+
+	// restartRequired is set to true by the plugin controller after a plugin install or uninstall.
+	// The instance controller picks it up, triggers a SonarQube restart, and clears this flag.
+	// +optional
+	RestartRequired bool `json:"restartRequired,omitempty"`
 
 	// conditions represent the detailed state of the SonarQubeInstance.
 	// +listType=map

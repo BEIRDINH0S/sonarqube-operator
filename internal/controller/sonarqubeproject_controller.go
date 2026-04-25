@@ -93,7 +93,7 @@ func (r *SonarQubeProjectReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, nil
 	}
 
-	if instance.Status.Phase != conditionReady {
+	if instance.Status.Phase != phaseReady {
 		log.Info("Instance not ready, requeueing", "instance", instance.Name)
 		project.Status.Phase = phasePending
 		apimeta.SetStatusCondition(&project.Status.Conditions, metav1.Condition{
@@ -180,7 +180,7 @@ func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, proje
 		}
 	}
 
-	project.Status.Phase = conditionReady
+	project.Status.Phase = phaseReady
 	project.Status.ProjectURL = fmt.Sprintf("%s/dashboard?id=%s", instance.Status.URL, project.Spec.Key)
 	apimeta.SetStatusCondition(&project.Status.Conditions, metav1.Condition{
 		Type:               conditionReady,

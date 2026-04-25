@@ -29,8 +29,9 @@ type SonarQubePluginSpec struct {
 	// +kubebuilder:validation:Required
 	InstanceRef InstanceRef `json:"instanceRef"`
 
-	// key est l'identifiant unique du plugin dans le marketplace SonarQube (ex: "sonar-java").
+	// key is the unique and immutable plugin key in the SonarQube marketplace (e.g. "sonar-java").
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec.key is immutable after creation"
 	Key string `json:"key"`
 
 	// version est la version du plugin à installer. Si omis, la dernière version est installée.

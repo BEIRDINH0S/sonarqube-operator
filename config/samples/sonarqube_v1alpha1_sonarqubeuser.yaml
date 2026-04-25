@@ -1,0 +1,16 @@
+apiVersion: sonarqube.sonarqube.io/v1alpha1
+kind: SonarQubeUser
+metadata:
+  name: my-user
+  namespace: default
+spec:
+  instanceRef:
+    name: my-sonarqube
+  login: john.doe
+  name: John Doe
+  email: john.doe@example.com
+  passwordSecretRef:
+    name: john-doe-password
+  groups:
+    - sonar-users
+    - my-team

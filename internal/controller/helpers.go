@@ -18,8 +18,6 @@ package controller
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -50,13 +48,17 @@ func getInstanceAdminToken(ctx context.Context, k8sClient client.Client, instanc
 	return token, nil
 }
 
-// Condition types partagés par tous les contrôleurs.
-// Le type est scoped à la ressource — "Ready" sur un Plugin signifie "installé", pas "UP".
+// Condition types and phase values shared across all controllers.
 const (
+	// conditionReady is the Type field of a metav1.Condition indicating readiness.
 	conditionReady            = "Ready"
 	conditionAdminInitialized = "AdminInitialized"
 	conditionInstalled        = "Installed"
 
+	// phaseReady and its siblings are values for Status.Phase fields.
+	// Kept separate from conditionReady to avoid silent breakage if the condition
+	// type name ever changes independently of the phase string.
+	phaseReady       = "Ready"
 	phasePending     = "Pending"
 	phaseFailed      = "Failed"
 	phaseProgressing = "Progressing"
@@ -66,14 +68,6 @@ const (
 	// The annotation is removed automatically after rotation.
 	AnnotationRotateToken = "sonarqube.io/rotate-token"
 )
-
-// podSpecHash calcule un hash SHA-256 de la PodSpec pour détecter les drifts sans reflect.DeepEqual.
-// On sérialise en JSON puis on hash — les champs à zéro sont omis de façon cohérente.
-func podSpecHash(spec corev1.PodSpec) string {
-	b, _ := json.Marshal(spec)
-	h := sha256.Sum256(b)
-	return fmt.Sprintf("%x", h)
-}
 
 // buildHeadlessService construit le Service headless requis par le StatefulSet.
 // Un service headless (clusterIP: None) donne un DNS stable par pod : <pod>.<svc>.<ns>.svc.cluster.local.

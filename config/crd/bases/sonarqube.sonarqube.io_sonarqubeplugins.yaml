@@ -71,10 +71,13 @@ spec:
                 - name
                 type: object
               key:
-                description: 'key est l''identifiant unique du plugin dans le marketplace
-                  SonarQube (ex: "sonar-java").'
+                description: key is the unique and immutable plugin key in the SonarQube
+                  marketplace (e.g. "sonar-java").
                 minLength: 1
                 type: string
+                x-kubernetes-validations:
+                - message: spec.key is immutable after creation
+                  rule: self == oldSelf
               version:
                 description: version est la version du plugin à installer. Si omis,
                   la dernière version est installée.

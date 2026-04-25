@@ -22,7 +22,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	sonarqubev1alpha1 "github.com/BEIRDINH0S/sonarqube-operator/api/v1alpha1"
@@ -83,42 +82,6 @@ var _ = Describe("helpers", func() {
 			token, err := getInstanceAdminToken(ctx, k8sClient, instance)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(token).To(Equal("sqp_abc123"))
-		})
-	})
-
-	Describe("podSpecHash", func() {
-		It("retourne le même hash pour des PodSpecs identiques", func() {
-			spec := corev1.PodSpec{
-				Containers: []corev1.Container{
-					{Name: "sonarqube", Image: "sonarqube:10.3-community"},
-				},
-			}
-			Expect(podSpecHash(spec)).To(Equal(podSpecHash(spec)))
-		})
-
-		It("retourne des hashes différents pour des PodSpecs différentes", func() {
-			spec1 := corev1.PodSpec{
-				Containers: []corev1.Container{{Name: "sonarqube", Image: "sonarqube:10.3-community"}},
-			}
-			spec2 := corev1.PodSpec{
-				Containers: []corev1.Container{{Name: "sonarqube", Image: "sonarqube:10.4-community"}},
-			}
-			Expect(podSpecHash(spec1)).NotTo(Equal(podSpecHash(spec2)))
-		})
-
-		It("retourne le même hash quelle que soit la représentation des quantités de ressources", func() {
-			spec1 := corev1.PodSpec{
-				Containers: []corev1.Container{{
-					Name: "sonarqube",
-					Resources: corev1.ResourceRequirements{
-						Requests: corev1.ResourceList{
-							corev1.ResourceMemory: resource.MustParse("2Gi"),
-						},
-					},
-				}},
-			}
-			spec2 := spec1.DeepCopy()
-			Expect(podSpecHash(spec1)).To(Equal(podSpecHash(*spec2)))
 		})
 	})
 

@@ -52,6 +52,8 @@ type SonarQubePluginReconciler struct {
 // +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubeplugins,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubeplugins/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubeplugins/finalizers,verbs=update
+// +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubeinstances,verbs=get;list;watch
+// +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubeinstances/status,verbs=get;update;patch
 
 func (r *SonarQubePluginReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, retErr error) {
 	start := time.Now()
@@ -94,7 +96,7 @@ func (r *SonarQubePluginReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// L'instance doit être Ready avant d'agir
-	if instance.Status.Phase != conditionReady {
+	if instance.Status.Phase != phaseReady {
 		log.Info("Instance not ready yet, requeueing", "instance", instance.Name, "phase", instance.Status.Phase)
 		plugin.Status.Phase = phasePending
 		apimeta.SetStatusCondition(&plugin.Status.Conditions, metav1.Condition{
@@ -127,7 +129,7 @@ func (r *SonarQubePluginReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	// Gérer la suppression via finalizer
 	if !plugin.DeletionTimestamp.IsZero() {
-		return ctrl.Result{}, r.handleDeletion(ctx, plugin, sonarClient)
+		return ctrl.Result{}, r.handleDeletion(ctx, plugin, sonarClient, instance)
 	}
 
 	// Ajouter le finalizer si absent
@@ -138,11 +140,11 @@ func (r *SonarQubePluginReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
-	return r.reconcilePlugin(ctx, plugin, sonarClient)
+	return r.reconcilePlugin(ctx, plugin, sonarClient, instance)
 }
 
 // reconcilePlugin compare l'état désiré au réel et agit.
-func (r *SonarQubePluginReconciler) reconcilePlugin(ctx context.Context, plugin *sonarqubev1alpha1.SonarQubePlugin, sonarClient sonarqube.Client) (ctrl.Result, error) {
+func (r *SonarQubePluginReconciler) reconcilePlugin(ctx context.Context, plugin *sonarqubev1alpha1.SonarQubePlugin, sonarClient sonarqube.Client, instance *sonarqubev1alpha1.SonarQubeInstance) (ctrl.Result, error) {
 	installed, err := sonarClient.ListInstalledPlugins(ctx)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("listing plugins: %w", err)
@@ -161,7 +163,7 @@ func (r *SonarQubePluginReconciler) reconcilePlugin(ctx context.Context, plugin 
 	switch {
 	case current == nil:
 		// Cas 1 : plugin absent → installer
-		return r.installPlugin(ctx, plugin, sonarClient)
+		return r.installPlugin(ctx, plugin, sonarClient, instance)
 
 	case plugin.Spec.Version != "" && current.Version != plugin.Spec.Version:
 		// Cas 2 : mauvaise version → désinstaller puis réinstaller
@@ -170,7 +172,7 @@ func (r *SonarQubePluginReconciler) reconcilePlugin(ctx context.Context, plugin 
 		if err := sonarClient.UninstallPlugin(ctx, plugin.Spec.Key); err != nil {
 			return ctrl.Result{}, fmt.Errorf("uninstalling plugin: %w", err)
 		}
-		return r.installPlugin(ctx, plugin, sonarClient)
+		return r.installPlugin(ctx, plugin, sonarClient, instance)
 
 	default:
 		// Cas 3 : plugin installé avec la bonne version → rien à faire
@@ -191,7 +193,7 @@ func (r *SonarQubePluginReconciler) reconcilePlugin(ctx context.Context, plugin 
 	}
 }
 
-func (r *SonarQubePluginReconciler) installPlugin(ctx context.Context, plugin *sonarqubev1alpha1.SonarQubePlugin, sonarClient sonarqube.Client) (ctrl.Result, error) {
+func (r *SonarQubePluginReconciler) installPlugin(ctx context.Context, plugin *sonarqubev1alpha1.SonarQubePlugin, sonarClient sonarqube.Client, instance *sonarqubev1alpha1.SonarQubeInstance) (ctrl.Result, error) {
 	plugin.Status.Phase = "Installing"
 	apimeta.SetStatusCondition(&plugin.Status.Conditions, metav1.Condition{
 		Type:               conditionInstalled,
@@ -216,30 +218,39 @@ func (r *SonarQubePluginReconciler) installPlugin(ctx context.Context, plugin *s
 		return ctrl.Result{}, fmt.Errorf("installing plugin: %w", err)
 	}
 
-	// Trigger a SonarQube restart to activate the plugin.
-	// The restart is asynchronous: SonarQube comes back UP after a few seconds.
-	if err := sonarClient.Restart(ctx); err != nil {
-		r.Recorder.Event(plugin, corev1.EventTypeWarning, "RestartFailed", err.Error())
-	} else {
-		r.Recorder.Event(plugin, corev1.EventTypeNormal, "Restarted",
-			fmt.Sprintf("SonarQube restarted to activate plugin %q", plugin.Spec.Key))
-	}
+	// Signal the instance controller to restart SonarQube.
+	// Delegating to the instance controller batches multiple plugin installs into one restart.
+	r.signalInstanceRestart(ctx, plugin, instance)
 
 	plugin.Status.Phase = "Installed"
 	plugin.Status.InstalledVersion = plugin.Spec.Version
-	plugin.Status.RestartRequired = false
+	plugin.Status.RestartRequired = true
 	apimeta.SetStatusCondition(&plugin.Status.Conditions, metav1.Condition{
 		Type:               conditionInstalled,
 		Status:             metav1.ConditionTrue,
 		Reason:             "Installed",
-		Message:            fmt.Sprintf("Plugin %q installed and SonarQube restarted", plugin.Spec.Key),
+		Message:            fmt.Sprintf("Plugin %q installed, SonarQube restart pending", plugin.Spec.Key),
 		ObservedGeneration: plugin.Generation,
 	})
 	return ctrl.Result{}, r.Status().Update(ctx, plugin)
 }
 
+// signalInstanceRestart patches instance.Status.RestartRequired = true so the instance controller
+// triggers a single batched SonarQube restart regardless of how many plugins were installed.
+func (r *SonarQubePluginReconciler) signalInstanceRestart(ctx context.Context, plugin *sonarqubev1alpha1.SonarQubePlugin, instance *sonarqubev1alpha1.SonarQubeInstance) {
+	if instance.Status.RestartRequired || instance.DeletionTimestamp != nil {
+		return
+	}
+	patch := client.MergeFrom(instance.DeepCopy())
+	instance.Status.RestartRequired = true
+	if err := r.Status().Patch(ctx, instance, patch); err != nil {
+		r.Recorder.Event(plugin, corev1.EventTypeWarning, "PatchInstanceFailed",
+			"could not signal restart to instance: "+err.Error())
+	}
+}
+
 // handleDeletion désinstalle le plugin avant de retirer le finalizer.
-func (r *SonarQubePluginReconciler) handleDeletion(ctx context.Context, plugin *sonarqubev1alpha1.SonarQubePlugin, sonarClient sonarqube.Client) error {
+func (r *SonarQubePluginReconciler) handleDeletion(ctx context.Context, plugin *sonarqubev1alpha1.SonarQubePlugin, sonarClient sonarqube.Client, instance *sonarqubev1alpha1.SonarQubeInstance) error {
 	if !controllerutil.ContainsFinalizer(plugin, pluginFinalizer) {
 		return nil
 	}
@@ -249,9 +260,7 @@ func (r *SonarQubePluginReconciler) handleDeletion(ctx context.Context, plugin *
 		return fmt.Errorf("uninstalling plugin on deletion: %w", err)
 	}
 
-	if err := sonarClient.Restart(ctx); err != nil {
-		r.Recorder.Event(plugin, corev1.EventTypeWarning, "RestartFailed", err.Error())
-	}
+	r.signalInstanceRestart(ctx, plugin, instance)
 
 	r.Recorder.Event(plugin, corev1.EventTypeNormal, "Uninstalled",
 		fmt.Sprintf("Plugin %q uninstalled", plugin.Spec.Key))

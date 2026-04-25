@@ -26,7 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
-// +kubebuilder:webhook:path=/validate-sonarqube-sonarqube-io-v1alpha1-sonarqubeinstance,mutating=false,failurePolicy=fail,sideEffects=None,groups=sonarqube.sonarqube.io,resources=sonarqubeinstances,verbs=create;update,versions=v1alpha1,name=vsonarqubeinstance.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-sonarqube-sonarqube-io-v1alpha1-sonarqubeinstance,mutating=false,failurePolicy=ignore,sideEffects=None,groups=sonarqube.sonarqube.io,resources=sonarqubeinstances,verbs=create;update,versions=v1alpha1,name=vsonarqubeinstance.kb.io,admissionReviewVersions=v1
 
 // SonarQubeInstanceValidator validates SonarQubeInstance resources.
 type SonarQubeInstanceValidator struct{}
