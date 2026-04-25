@@ -170,6 +170,31 @@ helm-package: helm-sync-crds ## Package the Helm chart into dist/.
 	mkdir -p dist
 	helm package "$(HELM_CHART_DIR)" --destination dist
 
+##@ Documentation
+
+# Python virtualenv for the MkDocs toolchain. Kept out of the system Python
+# so the user doesn't need to install global packages.
+DOCS_VENV ?= .venv-docs
+DOCS_PIP  := $(DOCS_VENV)/bin/pip
+DOCS_BIN  := $(DOCS_VENV)/bin/mkdocs
+
+$(DOCS_BIN): requirements-docs.txt
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for docs"; exit 1; }
+	python3 -m venv "$(DOCS_VENV)"
+	"$(DOCS_PIP)" install --upgrade pip
+	"$(DOCS_PIP)" install -r requirements-docs.txt
+
+.PHONY: docs-install
+docs-install: $(DOCS_BIN) ## Install the MkDocs toolchain into a local virtualenv.
+
+.PHONY: docs-serve
+docs-serve: $(DOCS_BIN) ## Run the docs locally with live reload (http://localhost:8000).
+	"$(DOCS_BIN)" serve --dev-addr=127.0.0.1:8000
+
+.PHONY: docs-build
+docs-build: $(DOCS_BIN) ## Build the docs into ./site (used by the docs CI workflow).
+	"$(DOCS_BIN)" build --strict
+
 ##@ Deployment
 
 ifndef ignore-not-found

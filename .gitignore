@@ -6,6 +6,8 @@
 *.dylib
 bin/*
 dist/
+site/
+.venv-docs/
 Dockerfile.cross
 
 # Test binary, built with `go test -c`

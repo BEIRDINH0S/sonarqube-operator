@@ -1,0 +1,140 @@
+site_name: SonarQube Operator
+site_description: A Kubernetes operator that manages SonarQube and its configuration as code
+site_url: https://beirdinh0s.github.io/sonarqube-operator/
+site_author: BEIRDINH0S
+copyright: Copyright &copy; 2026 BEIRDINH0S
+
+repo_name: BEIRDINH0S/sonarqube-operator
+repo_url: https://github.com/BEIRDINH0S/sonarqube-operator
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  language: en
+  # The SonarQube logo can't be redistributed directly (trademark). Material's
+  # shield-check icon is used as a placeholder until we have a project-specific
+  # logo. Favicon is the official SonarSource one (public asset).
+  icon:
+    logo: material/shield-check
+  favicon: assets/favicon.ico
+  font:
+    text: Inter
+    code: JetBrains Mono
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - navigation.tracking
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+    - content.action.edit
+
+plugins:
+  - search
+
+markdown_extensions:
+  # GitHub-flavored basics
+  - tables
+  - footnotes
+  - attr_list
+  - md_in_html
+  - def_list
+  - abbr
+  # Heading anchors
+  - toc:
+      permalink: true
+      permalink_title: Permanent link to this heading
+  # Admonitions: !!! note / warning / tip / etc.
+  - admonition
+  - pymdownx.details
+  # Code blocks: syntax highlighting, line numbers, copy button
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  # Tabs (=== "Tab 1")
+  - pymdownx.tabbed:
+      alternate_style: true
+  # Task lists with checkboxes
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  # Smart symbol replacements (-> becomes →, etc.)
+  - pymdownx.smartsymbols
+  # Critic markup, magic links, emoji
+  - pymdownx.critic
+  - pymdownx.magiclink
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - getting-started/index.md
+      - Concepts: getting-started/concepts.md
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quick-start.md
+  - How-To Guides:
+      - how-to/index.md
+      - Install Plugins: how-to/install-plugins.md
+      - Manage Projects: how-to/manage-projects.md
+      - Quality Gates as Code: how-to/quality-gates-as-code.md
+      - Manage Users and Groups: how-to/manage-users-and-groups.md
+      - Token Rotation: how-to/token-rotation.md
+      - High Availability: how-to/high-availability.md
+  - Reference:
+      - reference/index.md
+      - CRDs:
+          - SonarQubeInstance: reference/crds/sonarqubeinstance.md
+          - SonarQubePlugin: reference/crds/sonarqubeplugin.md
+          - SonarQubeProject: reference/crds/sonarqubeproject.md
+          - SonarQubeQualityGate: reference/crds/sonarqubequalitygate.md
+          - SonarQubeUser: reference/crds/sonarqubeuser.md
+      - Helm Values: reference/helm-values.md
+      - Metrics: reference/metrics.md
+  - Operations:
+      - operations/index.md
+      - Monitoring: operations/monitoring.md
+      - Upgrade: operations/upgrade.md
+      - Troubleshooting: operations/troubleshooting.md
+  - Contributing: contributing.md
+  - Changelog: changelog.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/BEIRDINH0S/sonarqube-operator
+      name: GitHub repository
+
