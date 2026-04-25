@@ -155,6 +155,10 @@ type Client interface {
 	// expirationDate est optionnel (format YYYY-MM-DD) ; passer "" pour un token sans expiration.
 	GenerateToken(ctx context.Context, name, tokenType, projectKey, expirationDate string) (*Token, error)
 	RevokeToken(ctx context.Context, name string) error
+	// GenerateUserToken generates a token under the specified user's login.
+	GenerateUserToken(ctx context.Context, login, name, tokenType, expirationDate string) (*Token, error)
+	// RevokeUserToken revokes a token belonging to the specified user.
+	RevokeUserToken(ctx context.Context, login, name string) error
 
 	// Users
 	GetUser(ctx context.Context, login string) (*User, error)
@@ -695,6 +699,34 @@ func (c *httpClient) GenerateToken(ctx context.Context, name, tokenType, project
 		return nil, err
 	}
 	return &result, nil
+}
+
+func (c *httpClient) GenerateUserToken(ctx context.Context, login, name, tokenType, expirationDate string) (*Token, error) {
+	params := url.Values{
+		"login": {login},
+		"name":  {name},
+		"type":  {tokenType},
+	}
+	if expirationDate != "" {
+		params.Set("expirationDate", expirationDate)
+	}
+	body, err := c.do(ctx, http.MethodPost, "/api/user_tokens/generate", params)
+	if err != nil {
+		return nil, err
+	}
+	var result Token
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *httpClient) RevokeUserToken(ctx context.Context, login, name string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/user_tokens/revoke", url.Values{
+		"login": {login},
+		"name":  {name},
+	})
+	return err
 }
 
 func (c *httpClient) RevokeToken(ctx context.Context, name string) error {

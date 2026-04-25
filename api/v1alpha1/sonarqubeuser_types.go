@@ -60,6 +60,35 @@ type SonarQubeUserSpec struct {
 	// by this list on each reconcile. Pass an empty list to clear all accounts.
 	// +optional
 	ScmAccounts []string `json:"scmAccounts,omitempty"`
+
+	// tokens declares standalone user tokens to materialize as Kubernetes Secrets.
+	// Each token is independent of any project — for personal automation, read-only
+	// API access, or a global analysis token. Removing an entry revokes the token
+	// in SonarQube and deletes the Secret. To rotate, delete the Secret manually
+	// and the operator regenerates on the next reconcile.
+	// +optional
+	Tokens []UserToken `json:"tokens,omitempty"`
+}
+
+// UserToken declares a SonarQube user token stored in a Kubernetes Secret.
+type UserToken struct {
+	// name is the SonarQube-side token name. Must be unique per user.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// type is the SonarQube token type.
+	// +kubebuilder:validation:Enum=USER_TOKEN;GLOBAL_ANALYSIS_TOKEN
+	// +kubebuilder:default=USER_TOKEN
+	Type string `json:"type,omitempty"`
+
+	// secretName is the Kubernetes Secret (in the user's namespace) to store the
+	// token under the key "token".
+	// +kubebuilder:validation:MinLength=1
+	SecretName string `json:"secretName"`
+
+	// expiresIn sets the token's lifetime. If unset, the token never expires.
+	// +optional
+	ExpiresIn *metav1.Duration `json:"expiresIn,omitempty"`
 }
 
 // SonarQubeUserStatus defines the observed state of SonarQubeUser.
@@ -77,6 +106,12 @@ type SonarQubeUserStatus struct {
 	// Used to detect which groups should be removed if they are no longer in spec.groups.
 	// +optional
 	Groups []string `json:"groups,omitempty"`
+
+	// managedTokens tracks the names of standalone tokens the operator generated
+	// for this user. Names removed from spec.tokens but still in this list are
+	// revoked on the next reconcile.
+	// +optional
+	ManagedTokens []string `json:"managedTokens,omitempty"`
 
 	// +listType=map
 	// +listMapKey=type

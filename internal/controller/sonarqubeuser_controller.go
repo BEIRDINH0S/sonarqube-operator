@@ -23,6 +23,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -183,6 +184,10 @@ func (r *SonarQubeUserReconciler) reconcileUser(ctx context.Context, user *sonar
 		r.Recorder.Event(user, corev1.EventTypeWarning, "ScmAccountsUpdateFailed", err.Error())
 	}
 
+	if err := r.reconcileUserTokens(ctx, user, sonarClient); err != nil {
+		r.Recorder.Event(user, corev1.EventTypeWarning, "TokensUpdateFailed", err.Error())
+	}
+
 	user.Status.Phase = phaseReady
 	user.Status.Active = existing.Active
 	apimeta.SetStatusCondition(&user.Status.Conditions, metav1.Condition{
@@ -331,6 +336,70 @@ func (r *SonarQubeUserReconciler) reconcileGroups(ctx context.Context, user *son
 	}
 
 	user.Status.Groups = user.Spec.Groups
+	return nil
+}
+
+// reconcileUserTokens generates Secrets for spec.tokens entries the operator
+// hasn't materialized yet and revokes/deletes ones removed from spec. To
+// rotate a token, the user deletes the Secret manually — the operator
+// regenerates on the next reconcile.
+func (r *SonarQubeUserReconciler) reconcileUserTokens(ctx context.Context, user *sonarqubev1alpha1.SonarQubeUser, sonarClient sonarqube.Client) error {
+	desiredByName := make(map[string]sonarqubev1alpha1.UserToken, len(user.Spec.Tokens))
+	for _, t := range user.Spec.Tokens {
+		desiredByName[t.Name] = t
+	}
+
+	// Revoke tokens removed from spec.
+	for _, name := range user.Status.ManagedTokens {
+		if _, stillDesired := desiredByName[name]; stillDesired {
+			continue
+		}
+		if err := sonarClient.RevokeUserToken(ctx, user.Spec.Login, name); err != nil {
+			return fmt.Errorf("revoking token %q: %w", name, err)
+		}
+	}
+
+	// Generate tokens missing from the cluster.
+	for _, t := range user.Spec.Tokens {
+		secret := &corev1.Secret{}
+		err := r.Get(ctx, types.NamespacedName{Name: t.SecretName, Namespace: user.Namespace}, secret)
+		if err == nil {
+			continue
+		}
+		if !k8serrors.IsNotFound(err) {
+			return fmt.Errorf("checking secret %q: %w", t.SecretName, err)
+		}
+
+		expirationDate := ""
+		if t.ExpiresIn != nil {
+			expirationDate = time.Now().Add(t.ExpiresIn.Duration).Format("2006-01-02")
+		}
+		tokenType := t.Type
+		if tokenType == "" {
+			tokenType = "USER_TOKEN"
+		}
+		token, err := sonarClient.GenerateUserToken(ctx, user.Spec.Login, t.Name, tokenType, expirationDate)
+		if err != nil {
+			return fmt.Errorf("generating token %q: %w", t.Name, err)
+		}
+
+		newSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: t.SecretName, Namespace: user.Namespace},
+			Data:       map[string][]byte{"token": []byte(token.Token)},
+		}
+		if err := controllerutil.SetControllerReference(user, newSecret, r.Scheme); err != nil {
+			return err
+		}
+		if err := r.Create(ctx, newSecret); err != nil {
+			return fmt.Errorf("creating secret %q: %w", t.SecretName, err)
+		}
+	}
+
+	managed := make([]string, 0, len(user.Spec.Tokens))
+	for _, t := range user.Spec.Tokens {
+		managed = append(managed, t.Name)
+	}
+	user.Status.ManagedTokens = managed
 	return nil
 }
 
