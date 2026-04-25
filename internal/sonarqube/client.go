@@ -86,6 +86,14 @@ type Token struct {
 	Token string `json:"token"`
 }
 
+// PermissionTemplate is a SonarQube permission template.
+type PermissionTemplate struct {
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	Description       string `json:"description"`
+	ProjectKeyPattern string `json:"projectKeyPattern"`
+}
+
 // User représente un utilisateur SonarQube.
 type User struct {
 	Login  string `json:"login"`
@@ -178,6 +186,16 @@ type Client interface {
 	UpdateGroupDescription(ctx context.Context, name, description string) error
 	// DeleteGroup removes a group by name.
 	DeleteGroup(ctx context.Context, name string) error
+
+	// Permission templates
+	// CreatePermissionTemplate creates a template and returns its UUID.
+	CreatePermissionTemplate(ctx context.Context, name, description, projectKeyPattern string) (string, error)
+	// FindPermissionTemplate looks up a template by name; returns ErrNotFound if absent.
+	FindPermissionTemplate(ctx context.Context, name string) (*PermissionTemplate, error)
+	// DeletePermissionTemplate removes a template by UUID.
+	DeletePermissionTemplate(ctx context.Context, id string) error
+	// SetDefaultPermissionTemplate marks the named template as default.
+	SetDefaultPermissionTemplate(ctx context.Context, name string) error
 
 	// Users
 	GetUser(ctx context.Context, login string) (*User, error)
@@ -835,6 +853,62 @@ func (c *httpClient) UpdateGroupDescription(ctx context.Context, name, descripti
 
 func (c *httpClient) DeleteGroup(ctx context.Context, name string) error {
 	_, err := c.do(ctx, http.MethodPost, "/api/user_groups/delete", url.Values{"name": {name}})
+	return err
+}
+
+// --- Permission templates ---
+
+type permissionTemplateResponse struct {
+	PermissionTemplate PermissionTemplate `json:"permissionTemplate"`
+}
+
+type permissionTemplatesSearch struct {
+	PermissionTemplates []PermissionTemplate `json:"permissionTemplates"`
+}
+
+func (c *httpClient) CreatePermissionTemplate(ctx context.Context, name, description, projectKeyPattern string) (string, error) {
+	params := url.Values{"name": {name}}
+	if description != "" {
+		params.Set("description", description)
+	}
+	if projectKeyPattern != "" {
+		params.Set("projectKeyPattern", projectKeyPattern)
+	}
+	body, err := c.do(ctx, http.MethodPost, "/api/permissions/create_template", params)
+	if err != nil {
+		return "", err
+	}
+	var result permissionTemplateResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", err
+	}
+	return result.PermissionTemplate.ID, nil
+}
+
+func (c *httpClient) FindPermissionTemplate(ctx context.Context, name string) (*PermissionTemplate, error) {
+	body, err := c.do(ctx, http.MethodGet, "/api/permissions/search_templates", url.Values{"q": {name}})
+	if err != nil {
+		return nil, err
+	}
+	var result permissionTemplatesSearch
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	for i := range result.PermissionTemplates {
+		if result.PermissionTemplates[i].Name == name {
+			return &result.PermissionTemplates[i], nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func (c *httpClient) DeletePermissionTemplate(ctx context.Context, id string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/permissions/delete_template", url.Values{"templateId": {id}})
+	return err
+}
+
+func (c *httpClient) SetDefaultPermissionTemplate(ctx context.Context, name string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/permissions/set_default_template", url.Values{"templateName": {name}})
 	return err
 }
 
