@@ -61,6 +61,29 @@ type SonarQubeInstanceSpec struct {
 	// Without vm.max_map_count >= 524288, the embedded Elasticsearch will fail to start.
 	// +optional
 	SkipSysctlInit bool `json:"skipSysctlInit,omitempty"`
+
+	// nodeSelector pins the SonarQube pod to nodes matching these labels.
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// tolerations allow the SonarQube pod to schedule on tainted nodes.
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+
+	// affinity sets node/pod affinity rules for the SonarQube pod.
+	// +optional
+	Affinity *corev1.Affinity `json:"affinity,omitempty"`
+
+	// podSecurityContext overrides the pod-level security context. The default sets
+	// fsGroup=1000 (matches the official SonarQube image UID). When supplied, the
+	// operator preserves a default fsGroup of 1000 only if you leave fsGroup unset.
+	// +optional
+	PodSecurityContext *corev1.PodSecurityContext `json:"podSecurityContext,omitempty"`
+
+	// securityContext sets the container-level security context for the SonarQube container.
+	// Has no effect on the privileged sysctl init container — disable that with skipSysctlInit.
+	// +optional
+	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
 }
 
 // DatabaseSpec holds the PostgreSQL connection configuration.

@@ -336,6 +336,9 @@ func (r *SonarQubeInstanceReconciler) reconcileStatefulSet(ctx context.Context, 
 	existing.Spec.Template.Spec.InitContainers = desired.Spec.Template.Spec.InitContainers
 	existing.Spec.Template.Spec.Containers = desired.Spec.Template.Spec.Containers
 	existing.Spec.Template.Spec.SecurityContext = desired.Spec.Template.Spec.SecurityContext
+	existing.Spec.Template.Spec.NodeSelector = desired.Spec.Template.Spec.NodeSelector
+	existing.Spec.Template.Spec.Tolerations = desired.Spec.Template.Spec.Tolerations
+	existing.Spec.Template.Spec.Affinity = desired.Spec.Template.Spec.Affinity
 	return r.Update(ctx, existing)
 }
 
@@ -440,6 +443,14 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 	replicas := int32(1)
 	fsGroup := int64(1000)
 
+	podSecurityContext := corev1.PodSecurityContext{FSGroup: &fsGroup}
+	if instance.Spec.PodSecurityContext != nil {
+		podSecurityContext = *instance.Spec.PodSecurityContext.DeepCopy()
+		if podSecurityContext.FSGroup == nil {
+			podSecurityContext.FSGroup = &fsGroup
+		}
+	}
+
 	var initContainers []corev1.Container
 	if !instance.Spec.SkipSysctlInit {
 		// Embedded Elasticsearch requires vm.max_map_count >= 524288.
@@ -475,15 +486,17 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 				Spec: corev1.PodSpec{
 					// fsGroup 1000 matches the UID of the official sonarqube image.
 					// Without this the mounted PVC is root:root and SonarQube crashes on startup.
-					SecurityContext: &corev1.PodSecurityContext{
-						FSGroup: &fsGroup,
-					},
-					InitContainers: initContainers,
+					SecurityContext: &podSecurityContext,
+					NodeSelector:    instance.Spec.NodeSelector,
+					Tolerations:     instance.Spec.Tolerations,
+					Affinity:        instance.Spec.Affinity,
+					InitContainers:  initContainers,
 					Containers: []corev1.Container{
 						{
-							Name:      "sonarqube",
-							Image:     image,
-							Resources: resources,
+							Name:            "sonarqube",
+							Image:           image,
+							Resources:       resources,
+							SecurityContext: instance.Spec.SecurityContext,
 							Ports: []corev1.ContainerPort{
 								{Name: "http", ContainerPort: 9000, Protocol: corev1.ProtocolTCP},
 							},
