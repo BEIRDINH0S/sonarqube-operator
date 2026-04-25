@@ -272,7 +272,7 @@ status:
 | Field | Description |
 |---|---|
 | `version` | The actual running version, read from `/api/server/version`. May lag `spec.version` during a rolling upgrade. |
-| `url` | Reachability hint. Internal Service URL by default; the Ingress host when `spec.ingress.enabled: true`. |
+| `url` | **User-facing reachability hint.** Internal Service URL by default; the Ingress host when `spec.ingress.enabled: true`. Intended for human consumption (`kubectl get sonarqubeinstance` shows it as a column) and for external clients like browsers or `sonar-scanner` running outside the cluster. The operator's own controllers do **not** use this field for their internal SonarQube API calls — they always go through the in-cluster Service URL (`http://<name>.<ns>:9000`) so reconciliation does not depend on cluster-external networking. |
 | `adminTokenSecretRef` | Name of the Secret holding the operator's Bearer token (key `token`). Set after the bootstrap phase. |
 | `restartRequired` | True when a `SonarQubePlugin` reconciler asks the instance to restart. The instance controller picks it up, restarts SonarQube, and clears the flag. |
 

@@ -77,6 +77,24 @@ Common causes:
   9.x while the new instance is 10.x (or vice versa). Either upgrade,
   or restore the matching backup.
 
+### Child CRs stuck in `Pending` with `connection refused` while the instance is `Ready` (with Ingress)
+
+Symptom: a `SonarQubeInstance` with `spec.ingress.enabled: true` has `Phase: Ready`,
+the Ingress works in a browser, but every `SonarQubeProject` /
+`SonarQubeQualityGate` / `SonarQubeUser` / `SonarQubePlugin` targeting it stays
+in `Phase: Pending` and the operator logs show `dial tcp ...: connect: connection refused`.
+
+This was a regression in `v0.5.0-rc.2` and earlier: the child controllers used
+`instance.Status.URL` (which becomes the public Ingress host when ingress is on)
+to build their internal SonarQube API client. From inside the operator pod, the
+Ingress hostname is typically not reachable (it resolves to the pod's own
+loopback or a different service mesh entry).
+
+**Fixed in `v0.5.0-rc.3`** — child controllers always use the in-cluster Service
+URL (`http://<instance>.<namespace>:9000`) for their own API calls, regardless
+of ingress state. `Status.URL` keeps its user-facing meaning. If you're on
+`rc.2` or earlier with ingress enabled, upgrade to fix this.
+
 ### `Phase: Progressing` after being `Ready`
 
 The instance was previously `Ready` but is now failing health checks
