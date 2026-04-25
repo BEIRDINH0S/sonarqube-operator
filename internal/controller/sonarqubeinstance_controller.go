@@ -89,6 +89,14 @@ func (r *SonarQubeInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	log.Info("Reconciling", "name", instance.Name, "phase", instance.Status.Phase)
 
+	if instance.Spec.Cluster != nil {
+		// Scaffold: DCE topology is recorded but the operator still renders
+		// the single-pod StatefulSet below. The follow-up will switch to
+		// two StatefulSets (app + search) when spec.cluster is set.
+		r.Recorder.Event(instance, corev1.EventTypeWarning, "DCENotImplementedYet",
+			"spec.cluster is accepted but DCE rendering is not wired up yet — see issue #11. Single-node deploy is used.")
+	}
+
 	if err := r.reconcileStatefulSet(ctx, instance); err != nil {
 		r.Recorder.Event(instance, corev1.EventTypeWarning, "StatefulSetFailed", err.Error())
 		return ctrl.Result{}, fmt.Errorf("reconciling StatefulSet: %w", err)

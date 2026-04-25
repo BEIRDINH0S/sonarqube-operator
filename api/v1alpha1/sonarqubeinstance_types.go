@@ -90,6 +90,13 @@ type SonarQubeInstanceSpec struct {
 	// in the cluster, the operator emits a Degraded condition rather than crashing.
 	// +optional
 	Monitoring MonitoringSpec `json:"monitoring,omitempty"`
+
+	// cluster configures SonarQube Data Center Edition (multi-node) topology.
+	// Only valid when edition=enterprise; rejected at admission otherwise.
+	// Note: as of this PR the operator still renders a single StatefulSet —
+	// the actual two-StatefulSet (app + search) DCE rendering is a follow-up.
+	// +optional
+	Cluster *ClusterSpec `json:"cluster,omitempty"`
 }
 
 // MonitoringSpec configures Prometheus scraping integration.
@@ -110,6 +117,24 @@ type MonitoringSpec struct {
 	// `serviceMonitorSelector` to match.
 	// +optional
 	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// ClusterSpec configures SonarQube DCE (Data Center Edition) topology.
+// +kubebuilder:validation:XValidation:rule="self.searchNodes % 2 == 1",message="cluster.searchNodes must be odd to maintain Elasticsearch quorum"
+type ClusterSpec struct {
+	// appNodes is the number of application nodes (>= 2 for HA).
+	// +kubebuilder:validation:Minimum=2
+	AppNodes int32 `json:"appNodes"`
+
+	// searchNodes is the number of Elasticsearch search nodes. Must be odd
+	// (>= 3) so the cluster can tolerate one node loss and still have quorum.
+	// +kubebuilder:validation:Minimum=3
+	SearchNodes int32 `json:"searchNodes"`
+
+	// licenseSecretRef is the name of the Secret containing the DCE license
+	// under the key "license". DCE refuses to start without one.
+	// +kubebuilder:validation:MinLength=1
+	LicenseSecretRef string `json:"licenseSecretRef"`
 }
 
 // DatabaseSpec holds the PostgreSQL connection configuration.
