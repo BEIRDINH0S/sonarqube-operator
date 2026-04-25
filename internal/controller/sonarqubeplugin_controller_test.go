@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -254,6 +255,57 @@ var _ = Describe("SonarQubePlugin Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(mock.uninstallPluginCalls).To(Equal(1))
+	})
+
+	It("rejette spec.version + spec.source à l'admission", func() {
+		p := &sonarqubev1alpha1.SonarQubePlugin{
+			ObjectMeta: metav1.ObjectMeta{Name: "plugin-bad-source", Namespace: "default"},
+			Spec: sonarqubev1alpha1.SonarQubePluginSpec{
+				InstanceRef: sonarqubev1alpha1.InstanceRef{Name: "any"},
+				Key:         "custom",
+				Version:     "1.2.3",
+				Source: &sonarqubev1alpha1.PluginSource{
+					URL:      "https://example.com/plugin.jar",
+					Checksum: "sha256:" + strings.Repeat("a", 64),
+				},
+			},
+		}
+		err := k8sClient.Create(ctx, p)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("mutually exclusive"))
+	})
+
+	It("met le plugin en Failed avec URLInstallNotImplemented quand spec.source est utilisé", func() {
+		instanceName := "instance-source"
+		pluginName := "plugin-source"
+		nn := types.NamespacedName{Name: pluginName, Namespace: "default"}
+		defer deletePlugin(pluginName)
+		defer deleteInstance(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		p := &sonarqubev1alpha1.SonarQubePlugin{
+			ObjectMeta: metav1.ObjectMeta{Name: pluginName, Namespace: "default"},
+			Spec: sonarqubev1alpha1.SonarQubePluginSpec{
+				InstanceRef: sonarqubev1alpha1.InstanceRef{Name: instanceName},
+				Key:         "custom-plugin",
+				Source: &sonarqubev1alpha1.PluginSource{
+					URL:      "https://example.com/plugin.jar",
+					Checksum: "sha256:" + strings.Repeat("a", 64),
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+
+		mock := &mockSonarClient{}
+		_, err := newPluginReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(mock.installPluginCalls).To(Equal(0))
+
+		updated := &sonarqubev1alpha1.SonarQubePlugin{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(phaseFailed))
+		Expect(updated.Status.Conditions[0].Reason).To(Equal("URLInstallNotImplemented"))
 	})
 
 	It("réinstalle si la version est mauvaise", func() {
