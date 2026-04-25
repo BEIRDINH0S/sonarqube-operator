@@ -60,6 +60,13 @@ spec:
                     default: false
                     description: enabled active la génération du token CI.
                     type: boolean
+                  expiresIn:
+                    description: |-
+                      expiresIn est la durée de vie optionnelle du token.
+                      Si défini, le token expirera après cette durée à compter de sa création.
+                      Ex. : "720h" (30 jours), "8760h" (1 an).
+                      Si non défini, le token n'expire jamais.
+                    type: string
                   secretName:
                     description: secretName est le nom du Secret Kubernetes où stocker
                       le token.

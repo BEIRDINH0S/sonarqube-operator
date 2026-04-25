@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -27,12 +28,15 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	crtlcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	sonarqubev1alpha1 "github.com/BEIRDINH0S/sonarqube-operator/api/v1alpha1"
+	"github.com/BEIRDINH0S/sonarqube-operator/internal/metrics"
 	"github.com/BEIRDINH0S/sonarqube-operator/internal/sonarqube"
 )
 
@@ -50,7 +54,16 @@ type SonarQubeQualityGateReconciler struct {
 // +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubequalitygates/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubequalitygates/finalizers,verbs=update
 
-func (r *SonarQubeQualityGateReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *SonarQubeQualityGateReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, retErr error) {
+	start := time.Now()
+	defer func() {
+		metrics.ReconcileTotal.WithLabelValues("sonarqubequalitygate").Inc()
+		metrics.ReconcileDuration.WithLabelValues("sonarqubequalitygate").Observe(time.Since(start).Seconds())
+		if retErr != nil {
+			metrics.ReconcileErrors.WithLabelValues("sonarqubequalitygate").Inc()
+		}
+	}()
+
 	log := logf.FromContext(ctx)
 
 	gate := &sonarqubev1alpha1.SonarQubeQualityGate{}
@@ -110,7 +123,7 @@ func (r *SonarQubeQualityGateReconciler) Reconcile(ctx context.Context, req ctrl
 	sonarClient := r.NewSonarClient(instance.Status.URL, token)
 
 	if !gate.DeletionTimestamp.IsZero() {
-		return r.handleDeletion(ctx, gate, sonarClient)
+		return ctrl.Result{}, r.handleDeletion(ctx, gate, sonarClient)
 	}
 
 	if !controllerutil.ContainsFinalizer(gate, qualityGateFinalizer) {
@@ -120,15 +133,15 @@ func (r *SonarQubeQualityGateReconciler) Reconcile(ctx context.Context, req ctrl
 		}
 	}
 
-	return r.reconcileQualityGate(ctx, gate, sonarClient)
+	return ctrl.Result{}, r.reconcileQualityGate(ctx, gate, sonarClient)
 }
 
-func (r *SonarQubeQualityGateReconciler) reconcileQualityGate(ctx context.Context, gate *sonarqubev1alpha1.SonarQubeQualityGate, sonarClient sonarqube.Client) (ctrl.Result, error) {
+func (r *SonarQubeQualityGateReconciler) reconcileQualityGate(ctx context.Context, gate *sonarqubev1alpha1.SonarQubeQualityGate, sonarClient sonarqube.Client) error {
 	// GetQualityGate utilise /api/qualitygates/show qui retourne les conditions (contrairement à /list).
 	// ErrNotFound signifie que le gate n'existe pas encore.
 	existing, err := sonarClient.GetQualityGate(ctx, gate.Spec.Name)
 	if err != nil && !errors.Is(err, sonarqube.ErrNotFound) {
-		return ctrl.Result{}, fmt.Errorf("getting quality gate: %w", err)
+		return fmt.Errorf("getting quality gate: %w", err)
 	}
 
 	var gateID string
@@ -147,7 +160,7 @@ func (r *SonarQubeQualityGateReconciler) reconcileQualityGate(ctx context.Contex
 			})
 			_ = r.Status().Update(ctx, gate)
 			r.Recorder.Event(gate, corev1.EventTypeWarning, "CreateFailed", err.Error())
-			return ctrl.Result{}, fmt.Errorf("creating quality gate: %w", err)
+			return fmt.Errorf("creating quality gate: %w", err)
 		}
 		gateID = created.ID
 		r.Recorder.Event(gate, corev1.EventTypeNormal, "Created",
@@ -170,7 +183,7 @@ func (r *SonarQubeQualityGateReconciler) reconcileQualityGate(ctx context.Contex
 		})
 		_ = r.Status().Update(ctx, gate)
 		r.Recorder.Event(gate, corev1.EventTypeWarning, "ConditionSyncFailed", err.Error())
-		return ctrl.Result{}, err
+		return err
 	}
 
 	// Définir comme gate par défaut si demandé
@@ -189,7 +202,7 @@ func (r *SonarQubeQualityGateReconciler) reconcileQualityGate(ctx context.Contex
 		Message:            fmt.Sprintf("Quality gate %q is ready (id=%s)", gate.Spec.Name, gateID),
 		ObservedGeneration: gate.Generation,
 	})
-	return ctrl.Result{}, r.Status().Update(ctx, gate)
+	return r.Status().Update(ctx, gate)
 }
 
 // reconcileConditions synchronise les conditions entre la spec et SonarQube.
@@ -240,9 +253,9 @@ func conditionKey(metric, op, value string) string {
 	return metric + "|" + op + "|" + value
 }
 
-func (r *SonarQubeQualityGateReconciler) handleDeletion(ctx context.Context, gate *sonarqubev1alpha1.SonarQubeQualityGate, sonarClient sonarqube.Client) (ctrl.Result, error) {
+func (r *SonarQubeQualityGateReconciler) handleDeletion(ctx context.Context, gate *sonarqubev1alpha1.SonarQubeQualityGate, sonarClient sonarqube.Client) error {
 	if !controllerutil.ContainsFinalizer(gate, qualityGateFinalizer) {
-		return ctrl.Result{}, nil
+		return nil
 	}
 
 	if gate.Status.GateID != "" {
@@ -257,12 +270,17 @@ func (r *SonarQubeQualityGateReconciler) handleDeletion(ctx context.Context, gat
 		}
 	}
 	controllerutil.RemoveFinalizer(gate, qualityGateFinalizer)
-	return ctrl.Result{}, r.Update(ctx, gate)
+	return r.Update(ctx, gate)
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *SonarQubeQualityGateReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
+		WithOptions(crtlcontroller.Options{
+			RateLimiter: workqueue.NewTypedItemExponentialFailureRateLimiter[ctrl.Request](
+				500*time.Millisecond, 5*time.Minute,
+			),
+		}).
 		For(&sonarqubev1alpha1.SonarQubeQualityGate{}).
 		Named("sonarqubequalitygate").
 		Complete(r)

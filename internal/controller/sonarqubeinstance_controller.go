@@ -32,8 +32,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	crtlcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -66,7 +68,16 @@ type SonarQubeInstanceReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 
-func (r *SonarQubeInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *SonarQubeInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, retErr error) {
+	start := time.Now()
+	defer func() {
+		metrics.ReconcileTotal.WithLabelValues("sonarqubeinstance").Inc()
+		metrics.ReconcileDuration.WithLabelValues("sonarqubeinstance").Observe(time.Since(start).Seconds())
+		if retErr != nil {
+			metrics.ReconcileErrors.WithLabelValues("sonarqubeinstance").Inc()
+		}
+	}()
+
 	log := logf.FromContext(ctx)
 
 	instance := &sonarqubev1alpha1.SonarQubeInstance{}
@@ -231,7 +242,7 @@ func (r *SonarQubeInstanceReconciler) initializeAdmin(ctx context.Context, insta
 
 	// Nom unique incluant le namespace pour éviter les collisions entre instances homonymes
 	tokenName := fmt.Sprintf("%s-%s-operator", instance.Namespace, instance.Name)
-	token, err := clientNewPass.GenerateToken(ctx, tokenName, "USER_TOKEN", "")
+	token, err := clientNewPass.GenerateToken(ctx, tokenName, "USER_TOKEN", "", "")
 	if err != nil {
 		return fmt.Errorf("generating admin token: %w", err)
 	}
@@ -598,6 +609,11 @@ func (r *SonarQubeInstanceReconciler) buildIngress(instance *sonarqubev1alpha1.S
 // SetupWithManager sets up the controller with the Manager.
 func (r *SonarQubeInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
+		WithOptions(crtlcontroller.Options{
+			RateLimiter: workqueue.NewTypedItemExponentialFailureRateLimiter[ctrl.Request](
+				500*time.Millisecond, 5*time.Minute,
+			),
+		}).
 		For(&sonarqubev1alpha1.SonarQubeInstance{}).
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.Service{}).

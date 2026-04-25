@@ -66,6 +66,13 @@ type CITokenSpec struct {
 	// secretName est le nom du Secret Kubernetes où stocker le token.
 	// +optional
 	SecretName string `json:"secretName,omitempty"`
+
+	// expiresIn est la durée de vie optionnelle du token.
+	// Si défini, le token expirera après cette durée à compter de sa création.
+	// Ex. : "720h" (30 jours), "8760h" (1 an).
+	// Si non défini, le token n'expire jamais.
+	// +optional
+	ExpiresIn *metav1.Duration `json:"expiresIn,omitempty"`
 }
 
 // SonarQubeProjectStatus defines the observed state of SonarQubeProject.

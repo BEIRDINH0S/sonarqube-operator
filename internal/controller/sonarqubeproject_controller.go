@@ -20,6 +20,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -28,12 +29,15 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	crtlcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	sonarqubev1alpha1 "github.com/BEIRDINH0S/sonarqube-operator/api/v1alpha1"
+	"github.com/BEIRDINH0S/sonarqube-operator/internal/metrics"
 	"github.com/BEIRDINH0S/sonarqube-operator/internal/sonarqube"
 )
 
@@ -52,7 +56,16 @@ type SonarQubeProjectReconciler struct {
 // +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubeprojects/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 
-func (r *SonarQubeProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *SonarQubeProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, retErr error) {
+	start := time.Now()
+	defer func() {
+		metrics.ReconcileTotal.WithLabelValues("sonarqubeproject").Inc()
+		metrics.ReconcileDuration.WithLabelValues("sonarqubeproject").Observe(time.Since(start).Seconds())
+		if retErr != nil {
+			metrics.ReconcileErrors.WithLabelValues("sonarqubeproject").Inc()
+		}
+	}()
+
 	log := logf.FromContext(ctx)
 
 	project := &sonarqubev1alpha1.SonarQubeProject{}
@@ -111,7 +124,7 @@ func (r *SonarQubeProjectReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	sonarClient := r.NewSonarClient(instance.Status.URL, token)
 
 	if !project.DeletionTimestamp.IsZero() {
-		return r.handleDeletion(ctx, project, sonarClient)
+		return ctrl.Result{}, r.handleDeletion(ctx, project, sonarClient)
 	}
 
 	if !controllerutil.ContainsFinalizer(project, projectFinalizer) {
@@ -121,16 +134,16 @@ func (r *SonarQubeProjectReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		}
 	}
 
-	return r.reconcileProject(ctx, project, instance, sonarClient)
+	return ctrl.Result{}, r.reconcileProject(ctx, project, instance, sonarClient)
 }
 
-func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, project *sonarqubev1alpha1.SonarQubeProject, instance *sonarqubev1alpha1.SonarQubeInstance, sonarClient sonarqube.Client) (ctrl.Result, error) {
+func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, project *sonarqubev1alpha1.SonarQubeProject, instance *sonarqubev1alpha1.SonarQubeInstance, sonarClient sonarqube.Client) error {
 	// Vérifier si le projet existe déjà dans SonarQube
 	existing, err := sonarClient.GetProject(ctx, project.Spec.Key)
 	if err != nil {
 		if !stderrors.Is(err, sonarqube.ErrNotFound) {
 			// Vraie erreur réseau ou auth — on ne crée pas à l'aveugle
-			return ctrl.Result{}, fmt.Errorf("checking project: %w", err)
+			return fmt.Errorf("checking project: %w", err)
 		}
 		// Projet absent → créer
 		if err := sonarClient.CreateProject(ctx, project.Spec.Key, project.Spec.Name, project.Spec.Visibility); err != nil {
@@ -144,7 +157,7 @@ func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, proje
 			})
 			_ = r.Status().Update(ctx, project)
 			r.Recorder.Event(project, corev1.EventTypeWarning, "CreateFailed", err.Error())
-			return ctrl.Result{}, fmt.Errorf("creating project: %w", err)
+			return fmt.Errorf("creating project: %w", err)
 		}
 		r.Recorder.Event(project, corev1.EventTypeNormal, "Created", fmt.Sprintf("Project %q created", project.Spec.Key))
 	} else if existing.Visibility != project.Spec.Visibility {
@@ -163,7 +176,7 @@ func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, proje
 	// Gérer le token CI
 	if project.Spec.CIToken.Enabled {
 		if err := r.reconcileCIToken(ctx, project, instance, sonarClient); err != nil {
-			return ctrl.Result{}, err
+			return err
 		}
 	}
 
@@ -176,7 +189,7 @@ func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, proje
 		Message:            fmt.Sprintf("Project %q is ready in SonarQube", project.Spec.Key),
 		ObservedGeneration: project.Generation,
 	})
-	return ctrl.Result{}, r.Status().Update(ctx, project)
+	return r.Status().Update(ctx, project)
 }
 
 // reconcileCIToken ensures the CI token Secret is present and up to date.
@@ -219,8 +232,14 @@ func (r *SonarQubeProjectReconciler) reconcileCIToken(ctx context.Context, proje
 		}
 	}
 
+	// Compute expiration date if configured (format expected by SonarQube: YYYY-MM-DD).
+	expirationDate := ""
+	if project.Spec.CIToken.ExpiresIn != nil {
+		expirationDate = time.Now().Add(project.Spec.CIToken.ExpiresIn.Duration).Format("2006-01-02")
+	}
+
 	// Generate a fresh token.
-	token, err := sonarClient.GenerateToken(ctx, tokenName, "PROJECT_ANALYSIS_TOKEN", project.Spec.Key)
+	token, err := sonarClient.GenerateToken(ctx, tokenName, "PROJECT_ANALYSIS_TOKEN", project.Spec.Key, expirationDate)
 	if err != nil {
 		return fmt.Errorf("generating CI token: %w", err)
 	}
@@ -253,25 +272,30 @@ func (r *SonarQubeProjectReconciler) reconcileCIToken(ctx context.Context, proje
 	return nil
 }
 
-func (r *SonarQubeProjectReconciler) handleDeletion(ctx context.Context, project *sonarqubev1alpha1.SonarQubeProject, sonarClient sonarqube.Client) (ctrl.Result, error) {
+func (r *SonarQubeProjectReconciler) handleDeletion(ctx context.Context, project *sonarqubev1alpha1.SonarQubeProject, sonarClient sonarqube.Client) error {
 	if !controllerutil.ContainsFinalizer(project, projectFinalizer) {
-		return ctrl.Result{}, nil
+		return nil
 	}
 
 	if err := sonarClient.DeleteProject(ctx, project.Spec.Key); err != nil {
 		r.Recorder.Event(project, corev1.EventTypeWarning, "DeleteFailed", err.Error())
-		return ctrl.Result{}, fmt.Errorf("deleting project on deletion: %w", err)
+		return fmt.Errorf("deleting project on deletion: %w", err)
 	}
 
 	r.Recorder.Event(project, corev1.EventTypeNormal, "Deleted",
 		fmt.Sprintf("Project %q deleted from SonarQube", project.Spec.Key))
 	controllerutil.RemoveFinalizer(project, projectFinalizer)
-	return ctrl.Result{}, r.Update(ctx, project)
+	return r.Update(ctx, project)
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *SonarQubeProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
+		WithOptions(crtlcontroller.Options{
+			RateLimiter: workqueue.NewTypedItemExponentialFailureRateLimiter[ctrl.Request](
+				500*time.Millisecond, 5*time.Minute,
+			),
+		}).
 		For(&sonarqubev1alpha1.SonarQubeProject{}).
 		Owns(&corev1.Secret{}).
 		Named("sonarqubeproject").

@@ -55,6 +55,16 @@ spec:
               email:
                 description: email is the email address of the user.
                 type: string
+              groups:
+                description: |-
+                  groups is the list of SonarQube groups this user should belong to.
+                  When non-empty, the operator manages group membership declaratively:
+                  it adds missing groups and removes groups that were previously managed
+                  by the operator but are no longer listed here.
+                  Groups assigned by other means are never removed.
+                items:
+                  type: string
+                type: array
               instanceRef:
                 description: instanceRef references the target SonarQubeInstance.
                 properties:
@@ -169,6 +179,13 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              groups:
+                description: |-
+                  groups is the list of groups last synchronized by the operator.
+                  Used to detect which groups should be removed if they are no longer in spec.groups.
+                items:
+                  type: string
+                type: array
               phase:
                 description: phase is the current state of the user.
                 enum:

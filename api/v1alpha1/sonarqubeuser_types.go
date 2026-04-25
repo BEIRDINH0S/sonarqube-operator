@@ -45,6 +45,14 @@ type SonarQubeUserSpec struct {
 	// If omitted, SonarQube generates a random password (user must reset via email).
 	// +optional
 	PasswordSecretRef *corev1.LocalObjectReference `json:"passwordSecretRef,omitempty"`
+
+	// groups is the list of SonarQube groups this user should belong to.
+	// When non-empty, the operator manages group membership declaratively:
+	// it adds missing groups and removes groups that were previously managed
+	// by the operator but are no longer listed here.
+	// Groups assigned by other means are never removed.
+	// +optional
+	Groups []string `json:"groups,omitempty"`
 }
 
 // SonarQubeUserStatus defines the observed state of SonarQubeUser.
@@ -57,6 +65,11 @@ type SonarQubeUserStatus struct {
 	// active reflects whether the user account is active in SonarQube.
 	// +optional
 	Active bool `json:"active,omitempty"`
+
+	// groups is the list of groups last synchronized by the operator.
+	// Used to detect which groups should be removed if they are no longer in spec.groups.
+	// +optional
+	Groups []string `json:"groups,omitempty"`
 
 	// +listType=map
 	// +listMapKey=type

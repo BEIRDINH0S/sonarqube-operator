@@ -231,4 +231,62 @@ var _ = Describe("SonarQubeUser Controller", func() {
 		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 		Expect(updated.Status.Phase).To(Equal(phaseFailed))
 	})
+
+	It("ajoute l'utilisateur aux groupes manquants définis dans spec.groups", func() {
+		instanceName := "user-instance-groups-add"
+		userName := "user-groups-add"
+		nn := types.NamespacedName{Name: userName, Namespace: "default"}
+		defer deleteUser(userName)
+		defer deleteInstanceIfExists(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		u := newTestUser(userName, instanceName, "group.user")
+		u.Spec.Groups = []string{"dev-team", "security"}
+		Expect(k8sClient.Create(ctx, u)).To(Succeed())
+
+		// L'utilisateur existe déjà mais n'est dans aucun groupe
+		mock := &mockSonarClient{
+			getUserResult:       &sonarqube.User{Login: "group.user", Name: "John Doe", Active: true},
+			getUserGroupsResult: []string{}, // aucun groupe actuel
+		}
+		_, err := newUserReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		// Les deux groupes doivent avoir été ajoutés
+		Expect(mock.addUserToGroupCalls).To(Equal(2))
+		Expect(mock.removeUserFromGroupCalls).To(Equal(0))
+	})
+
+	It("retire uniquement les groupes précédemment gérés par l'opérateur", func() {
+		instanceName := "user-instance-groups-remove"
+		userName := "user-groups-remove"
+		nn := types.NamespacedName{Name: userName, Namespace: "default"}
+		defer deleteUser(userName)
+		defer deleteInstanceIfExists(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		u := newTestUser(userName, instanceName, "remove.user")
+		// spec.groups n'a plus que "dev-team" (on a retiré "security")
+		u.Spec.Groups = []string{"dev-team"}
+		Expect(k8sClient.Create(ctx, u)).To(Succeed())
+
+		// Mettre à jour le status pour simuler une réconciliation précédente qui avait géré "security"
+		updated := &sonarqubev1alpha1.SonarQubeUser{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		updated.Status.Groups = []string{"dev-team", "security"}
+		Expect(k8sClient.Status().Update(ctx, updated)).To(Succeed())
+
+		mock := &mockSonarClient{
+			getUserResult: &sonarqube.User{Login: "remove.user", Name: "John Doe", Active: true},
+			// L'utilisateur est dans dev-team et security dans SonarQube
+			getUserGroupsResult: []string{"dev-team", "security", "sonar-users"},
+		}
+		_, err := newUserReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		// "security" doit être retiré car il était dans status.groups mais pas dans spec.groups
+		// "sonar-users" ne doit PAS être retiré car il n'était pas géré par l'opérateur
+		Expect(mock.removeUserFromGroupCalls).To(Equal(1))
+		Expect(mock.addUserToGroupCalls).To(Equal(0))
+	})
 })

@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -26,8 +27,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	crtlcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -50,7 +53,16 @@ type SonarQubePluginReconciler struct {
 // +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubeplugins/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubeplugins/finalizers,verbs=update
 
-func (r *SonarQubePluginReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *SonarQubePluginReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, retErr error) {
+	start := time.Now()
+	defer func() {
+		metrics.ReconcileTotal.WithLabelValues("sonarqubeplugin").Inc()
+		metrics.ReconcileDuration.WithLabelValues("sonarqubeplugin").Observe(time.Since(start).Seconds())
+		if retErr != nil {
+			metrics.ReconcileErrors.WithLabelValues("sonarqubeplugin").Inc()
+		}
+	}()
+
 	log := logf.FromContext(ctx)
 
 	plugin := &sonarqubev1alpha1.SonarQubePlugin{}
@@ -115,7 +127,7 @@ func (r *SonarQubePluginReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	// Gérer la suppression via finalizer
 	if !plugin.DeletionTimestamp.IsZero() {
-		return r.handleDeletion(ctx, plugin, sonarClient)
+		return ctrl.Result{}, r.handleDeletion(ctx, plugin, sonarClient)
 	}
 
 	// Ajouter le finalizer si absent
@@ -227,14 +239,14 @@ func (r *SonarQubePluginReconciler) installPlugin(ctx context.Context, plugin *s
 }
 
 // handleDeletion désinstalle le plugin avant de retirer le finalizer.
-func (r *SonarQubePluginReconciler) handleDeletion(ctx context.Context, plugin *sonarqubev1alpha1.SonarQubePlugin, sonarClient sonarqube.Client) (ctrl.Result, error) {
+func (r *SonarQubePluginReconciler) handleDeletion(ctx context.Context, plugin *sonarqubev1alpha1.SonarQubePlugin, sonarClient sonarqube.Client) error {
 	if !controllerutil.ContainsFinalizer(plugin, pluginFinalizer) {
-		return ctrl.Result{}, nil
+		return nil
 	}
 
 	if err := sonarClient.UninstallPlugin(ctx, plugin.Spec.Key); err != nil {
 		r.Recorder.Event(plugin, corev1.EventTypeWarning, "UninstallFailed", err.Error())
-		return ctrl.Result{}, fmt.Errorf("uninstalling plugin on deletion: %w", err)
+		return fmt.Errorf("uninstalling plugin on deletion: %w", err)
 	}
 
 	if err := sonarClient.Restart(ctx); err != nil {
@@ -245,12 +257,17 @@ func (r *SonarQubePluginReconciler) handleDeletion(ctx context.Context, plugin *
 		fmt.Sprintf("Plugin %q uninstalled", plugin.Spec.Key))
 
 	controllerutil.RemoveFinalizer(plugin, pluginFinalizer)
-	return ctrl.Result{}, r.Update(ctx, plugin)
+	return r.Update(ctx, plugin)
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *SonarQubePluginReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
+		WithOptions(crtlcontroller.Options{
+			RateLimiter: workqueue.NewTypedItemExponentialFailureRateLimiter[ctrl.Request](
+				500*time.Millisecond, 5*time.Minute,
+			),
+		}).
 		For(&sonarqubev1alpha1.SonarQubePlugin{}).
 		Named("sonarqubeplugin").
 		Complete(r)

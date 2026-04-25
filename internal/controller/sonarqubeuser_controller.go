@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -27,12 +28,15 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	crtlcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	sonarqubev1alpha1 "github.com/BEIRDINH0S/sonarqube-operator/api/v1alpha1"
+	"github.com/BEIRDINH0S/sonarqube-operator/internal/metrics"
 	"github.com/BEIRDINH0S/sonarqube-operator/internal/sonarqube"
 )
 
@@ -50,7 +54,16 @@ type SonarQubeUserReconciler struct {
 // +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubeusers/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubeusers/finalizers,verbs=update
 
-func (r *SonarQubeUserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *SonarQubeUserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, retErr error) {
+	start := time.Now()
+	defer func() {
+		metrics.ReconcileTotal.WithLabelValues("sonarqubeuser").Inc()
+		metrics.ReconcileDuration.WithLabelValues("sonarqubeuser").Observe(time.Since(start).Seconds())
+		if retErr != nil {
+			metrics.ReconcileErrors.WithLabelValues("sonarqubeuser").Inc()
+		}
+	}()
+
 	log := logf.FromContext(ctx)
 
 	user := &sonarqubev1alpha1.SonarQubeUser{}
@@ -109,7 +122,7 @@ func (r *SonarQubeUserReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	sonarClient := r.NewSonarClient(instance.Status.URL, token)
 
 	if !user.DeletionTimestamp.IsZero() {
-		return r.handleDeletion(ctx, user, sonarClient)
+		return ctrl.Result{}, r.handleDeletion(ctx, user, sonarClient)
 	}
 
 	if !controllerutil.ContainsFinalizer(user, userFinalizer) {
@@ -139,6 +152,10 @@ func (r *SonarQubeUserReconciler) reconcileUser(ctx context.Context, user *sonar
 		}
 		r.Recorder.Event(user, corev1.EventTypeNormal, "Updated",
 			fmt.Sprintf("User %q updated (name/email synced)", user.Spec.Login))
+	}
+
+	if err := r.reconcileGroups(ctx, user, sonarClient); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	user.Status.Phase = conditionReady
@@ -186,6 +203,10 @@ func (r *SonarQubeUserReconciler) createUser(ctx context.Context, user *sonarqub
 	r.Recorder.Event(user, corev1.EventTypeNormal, "Created",
 		fmt.Sprintf("User %q created in SonarQube", user.Spec.Login))
 
+	if err := r.reconcileGroups(ctx, user, sonarClient); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	user.Status.Phase = conditionReady
 	user.Status.Active = true
 	apimeta.SetStatusCondition(&user.Status.Conditions, metav1.Condition{
@@ -218,9 +239,9 @@ func (r *SonarQubeUserReconciler) readPasswordSecret(ctx context.Context, user *
 	return pwd, nil
 }
 
-func (r *SonarQubeUserReconciler) handleDeletion(ctx context.Context, user *sonarqubev1alpha1.SonarQubeUser, sonarClient sonarqube.Client) (ctrl.Result, error) {
+func (r *SonarQubeUserReconciler) handleDeletion(ctx context.Context, user *sonarqubev1alpha1.SonarQubeUser, sonarClient sonarqube.Client) error {
 	if !controllerutil.ContainsFinalizer(user, userFinalizer) {
-		return ctrl.Result{}, nil
+		return nil
 	}
 
 	if err := sonarClient.DeactivateUser(ctx, user.Spec.Login); err != nil {
@@ -234,12 +255,64 @@ func (r *SonarQubeUserReconciler) handleDeletion(ctx context.Context, user *sona
 	}
 
 	controllerutil.RemoveFinalizer(user, userFinalizer)
-	return ctrl.Result{}, r.Update(ctx, user)
+	return r.Update(ctx, user)
+}
+
+// reconcileGroups syncs the user's group membership to match spec.groups.
+// Only runs when spec.groups is non-empty. Groups that were previously managed
+// by the operator (present in status.groups) are removed if no longer in spec.groups.
+// Groups added by other means are never removed.
+func (r *SonarQubeUserReconciler) reconcileGroups(ctx context.Context, user *sonarqubev1alpha1.SonarQubeUser, sonarClient sonarqube.Client) error {
+	if len(user.Spec.Groups) == 0 && len(user.Status.Groups) == 0 {
+		return nil
+	}
+
+	currentGroups, err := sonarClient.GetUserGroups(ctx, user.Spec.Login)
+	if err != nil {
+		return fmt.Errorf("getting user groups: %w", err)
+	}
+
+	currentSet := make(map[string]bool, len(currentGroups))
+	for _, g := range currentGroups {
+		currentSet[g] = true
+	}
+
+	desiredSet := make(map[string]bool, len(user.Spec.Groups))
+	for _, g := range user.Spec.Groups {
+		desiredSet[g] = true
+	}
+
+	// Add groups that are desired but not currently assigned.
+	for _, g := range user.Spec.Groups {
+		if !currentSet[g] {
+			if err := sonarClient.AddUserToGroup(ctx, user.Spec.Login, g); err != nil {
+				return fmt.Errorf("adding user to group %q: %w", g, err)
+			}
+		}
+	}
+
+	// Remove groups that were previously managed (status.groups) but are no longer desired.
+	// This avoids removing groups that were assigned by other means.
+	for _, g := range user.Status.Groups {
+		if !desiredSet[g] && currentSet[g] {
+			if err := sonarClient.RemoveUserFromGroup(ctx, user.Spec.Login, g); err != nil {
+				return fmt.Errorf("removing user from group %q: %w", g, err)
+			}
+		}
+	}
+
+	user.Status.Groups = user.Spec.Groups
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *SonarQubeUserReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
+		WithOptions(crtlcontroller.Options{
+			RateLimiter: workqueue.NewTypedItemExponentialFailureRateLimiter[ctrl.Request](
+				500*time.Millisecond, 5*time.Minute,
+			),
+		}).
 		For(&sonarqubev1alpha1.SonarQubeUser{}).
 		Named("sonarqubeuser").
 		Complete(r)

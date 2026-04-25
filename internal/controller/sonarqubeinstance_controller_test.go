@@ -76,6 +76,11 @@ type mockSonarClient struct {
 	createUserErr       error
 	updateUserCalls     int
 	deactivateUserCalls int
+	// user groups
+	getUserGroupsResult      []string
+	getUserGroupsErr         error
+	addUserToGroupCalls      int
+	removeUserFromGroupCalls int
 }
 
 func (m *mockSonarClient) GetStatus(_ context.Context) (string, string, error) {
@@ -147,7 +152,7 @@ func (m *mockSonarClient) AssignQualityGate(_ context.Context, _, _ string) erro
 	m.assignQualityGateCalls++
 	return nil
 }
-func (m *mockSonarClient) GenerateToken(_ context.Context, _, _, _ string) (*sonarqube.Token, error) {
+func (m *mockSonarClient) GenerateToken(_ context.Context, _, _, _, _ string) (*sonarqube.Token, error) {
 	return m.generateTokenResult, m.generateTokenErr
 }
 func (m *mockSonarClient) RevokeToken(_ context.Context, _ string) error {
@@ -170,6 +175,17 @@ func (m *mockSonarClient) UpdateUser(_ context.Context, _, _, _ string) error {
 }
 func (m *mockSonarClient) DeactivateUser(_ context.Context, _ string) error {
 	m.deactivateUserCalls++
+	return nil
+}
+func (m *mockSonarClient) GetUserGroups(_ context.Context, _ string) ([]string, error) {
+	return m.getUserGroupsResult, m.getUserGroupsErr
+}
+func (m *mockSonarClient) AddUserToGroup(_ context.Context, _, _ string) error {
+	m.addUserToGroupCalls++
+	return nil
+}
+func (m *mockSonarClient) RemoveUserFromGroup(_ context.Context, _, _ string) error {
+	m.removeUserFromGroupCalls++
 	return nil
 }
 

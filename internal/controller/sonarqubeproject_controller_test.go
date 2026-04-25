@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -319,6 +320,41 @@ var _ = Describe("SonarQubeProject Controller", func() {
 		updated := &sonarqubev1alpha1.SonarQubeProject{}
 		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 		Expect(updated.Annotations[AnnotationRotateToken]).To(BeEmpty())
+	})
+
+	It("génère le token CI avec une date d'expiration si expiresIn est défini", func() {
+		instanceName := "proj-instance-expiry"
+		projectName := "proj-expiry-token"
+		secretName := "proj-expiry-token-ci-token"
+		nn := types.NamespacedName{Name: projectName, Namespace: "default"}
+		defer deleteProject(projectName)
+		defer deleteInstanceIfExists(instanceName)
+		defer func() {
+			s := &corev1.Secret{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: secretName, Namespace: "default"}, s); err == nil {
+				_ = k8sClient.Delete(ctx, s)
+			}
+		}()
+
+		newReadyInstance(ctx, instanceName)
+		p := newTestProject(projectName, instanceName, "proj-expiry-key")
+		p.Spec.CIToken = sonarqubev1alpha1.CITokenSpec{
+			Enabled:   true,
+			ExpiresIn: &metav1.Duration{Duration: 720 * 24 * time.Hour}, // 30 jours
+		}
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+
+		mock := &mockSonarClient{
+			getProjectResult:    &sonarqube.Project{Key: "proj-expiry-key", Visibility: "private"},
+			generateTokenResult: &sonarqube.Token{Token: "sqp_expiry"},
+		}
+		_, err := newProjectReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		// Le token doit avoir été généré (le Secret doit exister)
+		secret := &corev1.Secret{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: secretName, Namespace: "default"}, secret)).To(Succeed())
+		Expect(string(secret.Data["token"])).To(Equal("sqp_expiry"))
 	})
 
 	It("supprime le projet SonarQube à la suppression de la ressource", func() {

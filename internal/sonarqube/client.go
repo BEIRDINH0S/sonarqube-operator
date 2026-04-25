@@ -124,7 +124,9 @@ type Client interface {
 	AssignQualityGate(ctx context.Context, projectKey, gateName string) error
 
 	// Tokens
-	GenerateToken(ctx context.Context, name, tokenType, projectKey string) (*Token, error)
+	// GenerateToken génère un token SonarQube.
+	// expirationDate est optionnel (format YYYY-MM-DD) ; passer "" pour un token sans expiration.
+	GenerateToken(ctx context.Context, name, tokenType, projectKey, expirationDate string) (*Token, error)
 	RevokeToken(ctx context.Context, name string) error
 
 	// Users
@@ -132,6 +134,9 @@ type Client interface {
 	CreateUser(ctx context.Context, login, name, email, password string) error
 	UpdateUser(ctx context.Context, login, name, email string) error
 	DeactivateUser(ctx context.Context, login string) error
+	GetUserGroups(ctx context.Context, login string) ([]string, error)
+	AddUserToGroup(ctx context.Context, login, group string) error
+	RemoveUserFromGroup(ctx context.Context, login, group string) error
 }
 
 // --- Implémentation HTTP ---
@@ -517,13 +522,16 @@ func (c *httpClient) AssignQualityGate(ctx context.Context, projectKey, gateName
 
 // --- Tokens ---
 
-func (c *httpClient) GenerateToken(ctx context.Context, name, tokenType, projectKey string) (*Token, error) {
+func (c *httpClient) GenerateToken(ctx context.Context, name, tokenType, projectKey, expirationDate string) (*Token, error) {
 	params := url.Values{
 		"name": {name},
 		"type": {tokenType},
 	}
 	if projectKey != "" {
 		params.Set("projectKey", projectKey)
+	}
+	if expirationDate != "" {
+		params.Set("expirationDate", expirationDate)
 	}
 	body, err := c.do(ctx, http.MethodPost, "/api/user_tokens/generate", params)
 	if err != nil {
@@ -594,5 +602,48 @@ func (c *httpClient) UpdateUser(ctx context.Context, login, name, email string) 
 
 func (c *httpClient) DeactivateUser(ctx context.Context, login string) error {
 	_, err := c.do(ctx, http.MethodPost, "/api/users/deactivate", url.Values{"login": {login}})
+	return err
+}
+
+// --- User groups ---
+
+type userGroupsResponse struct {
+	Groups []struct {
+		Name string `json:"name"`
+	} `json:"groups"`
+}
+
+func (c *httpClient) GetUserGroups(ctx context.Context, login string) ([]string, error) {
+	body, err := c.do(ctx, http.MethodGet, "/api/users/groups", url.Values{
+		"login":    {login},
+		"selected": {"selected"},
+	})
+	if err != nil {
+		return nil, err
+	}
+	var result userGroupsResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	groups := make([]string, len(result.Groups))
+	for i, g := range result.Groups {
+		groups[i] = g.Name
+	}
+	return groups, nil
+}
+
+func (c *httpClient) AddUserToGroup(ctx context.Context, login, group string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/user_groups/add_user", url.Values{
+		"login": {login},
+		"name":  {group},
+	})
+	return err
+}
+
+func (c *httpClient) RemoveUserFromGroup(ctx context.Context, login, group string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/user_groups/remove_user", url.Values{
+		"login": {login},
+		"name":  {group},
+	})
 	return err
 }
