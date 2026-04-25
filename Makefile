@@ -1,5 +1,8 @@
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+IMG ?= ghcr.io/BEIRDINH0S/sonarqube-operator:latest
+
+# Location of the Helm chart shipped with the operator
+HELM_CHART_DIR ?= charts/sonarqube-operator
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -145,6 +148,27 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 	mkdir -p dist
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default > dist/install.yaml
+
+.PHONY: helm-sync-crds
+helm-sync-crds: manifests ## Sync generated CRDs into the Helm chart so Helm 3 installs them automatically.
+	@mkdir -p "$(HELM_CHART_DIR)/crds"
+	@rm -f "$(HELM_CHART_DIR)/crds"/*.yaml
+	@cp config/crd/bases/*.yaml "$(HELM_CHART_DIR)/crds/"
+	@echo "Synced CRDs from config/crd/bases/ to $(HELM_CHART_DIR)/crds/"
+
+.PHONY: helm-lint
+helm-lint: helm-sync-crds ## Lint the Helm chart with sane default values.
+	helm lint "$(HELM_CHART_DIR)"
+	helm lint "$(HELM_CHART_DIR)" --set webhook.enabled=true --set metrics.serviceMonitor.enabled=true
+
+.PHONY: helm-template
+helm-template: helm-sync-crds ## Render the Helm chart locally with default values for inspection.
+	helm template sonarqube-operator "$(HELM_CHART_DIR)"
+
+.PHONY: helm-package
+helm-package: helm-sync-crds ## Package the Helm chart into dist/.
+	mkdir -p dist
+	helm package "$(HELM_CHART_DIR)" --destination dist
 
 ##@ Deployment
 

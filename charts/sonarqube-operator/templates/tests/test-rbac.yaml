@@ -1,0 +1,39 @@
+{{- /*
+helm test sanity check: confirm the operator's ServiceAccount is allowed to
+list each managed CRD. Catches RBAC drift between the manifests rendered by
+the chart and what the controller actually requires.
+*/ -}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "sonarqube-operator.fullname" . }}-test-rbac
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "sonarqube-operator.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: {{ include "sonarqube-operator.serviceAccountName" . }}
+  restartPolicy: Never
+  containers:
+    - name: kubectl
+      image: bitnami/kubectl:1.31
+      command:
+        - sh
+        - -c
+        - |
+          set -eu
+          for kind in sonarqubeinstances sonarqubeplugins sonarqubeprojects sonarqubequalitygates sonarqubeusers; do
+            echo "auth can-i list $kind"
+            kubectl auth can-i list "$kind.sonarqube.sonarqube.io" --all-namespaces
+          done
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: 65532
+        capabilities:
+          drop: [ALL]
+        seccompProfile:
+          type: RuntimeDefault

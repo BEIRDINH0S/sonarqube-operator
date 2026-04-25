@@ -1,0 +1,90 @@
+{{- if and .Values.rbac.create .Values.rbac.createAggregatedRoles -}}
+{{- /*
+Aggregated user-facing roles. They don't grant permissions themselves; they
+inherit from the kind-specific *-admin / *-editor / *-viewer roles below via
+aggregationRule. Cluster admins bind these to teams to give them access to
+the SonarQube CRDs without touching the operator's own ClusterRole.
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "sonarqube-operator.fullname" . }}-admin
+  labels:
+    {{- include "sonarqube-operator.labels" . | nindent 4 }}
+    rbac.authorization.k8s.io/aggregate-to-admin: "true"
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        sonarqube.sonarqube.io/aggregate-to-admin: "true"
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "sonarqube-operator.fullname" . }}-editor
+  labels:
+    {{- include "sonarqube-operator.labels" . | nindent 4 }}
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        sonarqube.sonarqube.io/aggregate-to-editor: "true"
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "sonarqube-operator.fullname" . }}-viewer
+  labels:
+    {{- include "sonarqube-operator.labels" . | nindent 4 }}
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        sonarqube.sonarqube.io/aggregate-to-viewer: "true"
+rules: []
+---
+{{- $kinds := list "sonarqubeinstances" "sonarqubeplugins" "sonarqubeprojects" "sonarqubequalitygates" "sonarqubeusers" -}}
+{{- range $kinds }}
+{{- $kind := . }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "sonarqube-operator.fullname" $ }}-{{ $kind }}-admin
+  labels:
+    {{- include "sonarqube-operator.labels" $ | nindent 4 }}
+    sonarqube.sonarqube.io/aggregate-to-admin: "true"
+rules:
+  - apiGroups: [sonarqube.sonarqube.io]
+    resources: [{{ $kind }}, {{ $kind }}/status]
+    verbs: [create, delete, deletecollection, get, list, patch, update, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "sonarqube-operator.fullname" $ }}-{{ $kind }}-editor
+  labels:
+    {{- include "sonarqube-operator.labels" $ | nindent 4 }}
+    sonarqube.sonarqube.io/aggregate-to-editor: "true"
+rules:
+  - apiGroups: [sonarqube.sonarqube.io]
+    resources: [{{ $kind }}]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [sonarqube.sonarqube.io]
+    resources: [{{ $kind }}/status]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "sonarqube-operator.fullname" $ }}-{{ $kind }}-viewer
+  labels:
+    {{- include "sonarqube-operator.labels" $ | nindent 4 }}
+    sonarqube.sonarqube.io/aggregate-to-viewer: "true"
+rules:
+  - apiGroups: [sonarqube.sonarqube.io]
+    resources: [{{ $kind }}, {{ $kind }}/status]
+    verbs: [get, list, watch]
+---
+{{- end }}
+{{- end }}

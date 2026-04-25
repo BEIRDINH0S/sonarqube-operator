@@ -1,0 +1,158 @@
+# -- Override the chart name used in resource names.
+nameOverride: ""
+# -- Override the fully qualified app name. Defaults to "<release>-<chart>".
+fullnameOverride: ""
+
+# -- Number of operator replicas. Leader election ensures only one is active at
+# a time, so >1 only buys faster failover.
+replicaCount: 1
+
+image:
+  # -- Container image repository.
+  repository: ghcr.io/BEIRDINH0S/sonarqube-operator
+  # -- Image pull policy.
+  pullPolicy: IfNotPresent
+  # -- Image tag. Defaults to .Chart.AppVersion when empty.
+  tag: ""
+
+# -- imagePullSecrets to mount on the operator pod.
+imagePullSecrets: []
+# - name: ghcr-auth
+
+# -- Extra arguments appended to the manager command line.
+extraArgs: []
+# - --zap-log-level=debug
+
+# -- Extra env vars on the manager container.
+extraEnv: []
+# - name: HTTPS_PROXY
+#   value: http://proxy.example.com:3128
+
+# -- Extra volumes mounted on the operator pod.
+extraVolumes: []
+# -- Extra volumeMounts on the manager container.
+extraVolumeMounts: []
+
+leaderElection:
+  # -- Enable leader election. Required for HA, harmless with replicaCount=1.
+  enabled: true
+
+webhook:
+  # -- Enable the validating webhook server. Requires TLS, typically via cert-manager.
+  enabled: false
+  # -- Port the webhook server listens on inside the pod.
+  port: 9443
+  # -- failurePolicy applied to every webhook rule. "Ignore" is safer for v1alpha1.
+  failurePolicy: Ignore
+  certManager:
+    # -- Have the chart manage a cert-manager Certificate for the webhook.
+    # When false you must provision the TLS secret out-of-band.
+    enabled: true
+    # -- Reference to an existing Issuer/ClusterIssuer. If both name and kind are
+    # empty, the chart provisions a self-signed Issuer + Certificate.
+    issuerRef:
+      name: ""
+      kind: ""
+    # -- Duration of the issued certificate (cert-manager Certificate.spec.duration).
+    duration: 8760h
+    # -- Renew before this much time remains (cert-manager Certificate.spec.renewBefore).
+    renewBefore: 720h
+  # -- Existing TLS secret with tls.crt/tls.key (used when certManager.enabled is false).
+  existingSecret: ""
+  # -- Base64-encoded CA bundle injected into the ValidatingWebhookConfiguration
+  # clientConfig when cert-manager is not in charge. Required for kube-apiserver
+  # to trust the webhook server certificate.
+  caBundle: ""
+
+metrics:
+  # -- Expose the controller-manager metrics endpoint.
+  enabled: true
+  # -- Serve metrics over HTTPS with kube authn/authz.
+  secure: true
+  # -- Port exposed by the metrics Service.
+  port: 8443
+  service:
+    # -- Service type for the metrics Service.
+    type: ClusterIP
+    # -- Extra annotations on the metrics Service.
+    annotations: {}
+  serviceMonitor:
+    # -- Create a Prometheus Operator ServiceMonitor.
+    enabled: false
+    # -- Extra labels on the ServiceMonitor (e.g. release: kube-prometheus-stack).
+    additionalLabels: {}
+    # -- Scrape interval.
+    interval: 30s
+    # -- Scrape timeout.
+    scrapeTimeout: 10s
+    # -- Skip TLS verification on the metrics endpoint. Set to false in production
+    # and configure tlsConfig instead.
+    insecureSkipVerify: true
+    # -- Override tlsConfig of the endpoint. When set, insecureSkipVerify is ignored.
+    tlsConfig: {}
+  networkPolicy:
+    # -- Restrict metrics ingress to namespaces labelled "metrics: enabled".
+    enabled: false
+
+healthProbe:
+  # -- Port for /healthz and /readyz.
+  port: 8081
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+# -- Pod-level securityContext applied to the manager pod.
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container-level securityContext applied to the manager container.
+containerSecurityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+# -- Annotations added to the manager pod.
+podAnnotations: {}
+# -- Extra labels added to the manager pod.
+podLabels: {}
+# -- Annotations added to the Deployment.
+deploymentAnnotations: {}
+
+# -- Standard scheduling knobs.
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""
+
+# -- Grace period before the pod is force-killed.
+terminationGracePeriodSeconds: 10
+
+serviceAccount:
+  # -- Create the operator ServiceAccount.
+  create: true
+  # -- Override the ServiceAccount name. Defaults to the fullname.
+  name: ""
+  # -- Annotations on the ServiceAccount (e.g. IRSA role ARN on EKS).
+  annotations: {}
+
+rbac:
+  # -- Create the operator ClusterRole/RoleBindings.
+  create: true
+  # -- Create the user-facing aggregated ClusterRoles (admin / editor / viewer).
+  createAggregatedRoles: true
+
+crds:
+  # -- Validate that CRDs are installed. Helm 3 installs files under crds/
+  # automatically on first install but never updates them on upgrade. Disable
+  # this if you manage CRDs out-of-band (e.g. via a separate Argo app).
+  keep: true

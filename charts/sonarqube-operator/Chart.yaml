@@ -1,0 +1,52 @@
+apiVersion: v2
+name: sonarqube-operator
+description: |
+  A Kubernetes operator that manages the full lifecycle of SonarQube and its
+  configuration as code: instances, plugins, projects, quality gates and users.
+type: application
+kubeVersion: ">=1.27.0-0"
+version: 0.5.0
+appVersion: "0.5.0"
+home: https://github.com/BEIRDINH0S/sonarqube-operator
+sources:
+  - https://github.com/BEIRDINH0S/sonarqube-operator
+keywords:
+  - sonarqube
+  - operator
+  - quality-gate
+  - code-quality
+  - gitops
+maintainers:
+  - name: BEIRDINH0S
+    url: https://github.com/BEIRDINH0S
+icon: https://www.sonarsource.com/favicon.ico
+annotations:
+  artifacthub.io/category: integration-delivery
+  artifacthub.io/operator: "true"
+  artifacthub.io/operatorCapabilities: Seamless Upgrades
+  artifacthub.io/crds: |
+    - kind: SonarQubeInstance
+      version: v1alpha1
+      name: sonarqubeinstances.sonarqube.sonarqube.io
+      displayName: SonarQube Instance
+      description: A managed SonarQube server instance.
+    - kind: SonarQubePlugin
+      version: v1alpha1
+      name: sonarqubeplugins.sonarqube.sonarqube.io
+      displayName: SonarQube Plugin
+      description: A plugin installed in a SonarQube instance.
+    - kind: SonarQubeProject
+      version: v1alpha1
+      name: sonarqubeprojects.sonarqube.sonarqube.io
+      displayName: SonarQube Project
+      description: A SonarQube project managed declaratively.
+    - kind: SonarQubeQualityGate
+      version: v1alpha1
+      name: sonarqubequalitygates.sonarqube.sonarqube.io
+      displayName: SonarQube Quality Gate
+      description: A SonarQube quality gate with drift detection.
+    - kind: SonarQubeUser
+      version: v1alpha1
+      name: sonarqubeusers.sonarqube.sonarqube.io
+      displayName: SonarQube User
+      description: A SonarQube user with declarative group membership.

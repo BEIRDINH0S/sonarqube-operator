@@ -1,0 +1,50 @@
+{{ include "sonarqube-operator.fullname" . }} has been installed in namespace {{ .Release.Namespace }}.
+
+Operator status:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "sonarqube-operator.fullname" . }}
+  kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/name={{ include "sonarqube-operator.name" . }} -f
+
+CRDs registered by this chart:
+  - SonarQubeInstance
+  - SonarQubePlugin
+  - SonarQubeProject
+  - SonarQubeQualityGate
+  - SonarQubeUser
+
+Quick start — create your first instance:
+
+  cat <<'EOF' | kubectl apply -f -
+  apiVersion: sonarqube.sonarqube.io/v1alpha1
+  kind: SonarQubeInstance
+  metadata:
+    name: sonarqube
+    namespace: {{ .Release.Namespace }}
+  spec:
+    version: "10.3-community"
+    storage:
+      size: 10Gi
+  EOF
+
+{{- if .Values.metrics.enabled }}
+
+Metrics:
+  The operator exposes Prometheus metrics on the {{ include "sonarqube-operator.fullname" . }}-metrics Service
+  (port {{ .Values.metrics.port }}{{ if .Values.metrics.secure }}, HTTPS with kube authn{{ else }}, HTTP{{ end }}).
+{{- if .Values.metrics.serviceMonitor.enabled }}
+  A ServiceMonitor has been created — make sure your Prometheus selector matches its labels.
+{{- end }}
+{{- end }}
+
+{{- if .Values.webhook.enabled }}
+
+Validating webhook is enabled.
+  - Webhook Service: {{ include "sonarqube-operator.webhookServiceName" . }}
+  - failurePolicy:   {{ .Values.webhook.failurePolicy }}
+{{- if .Values.webhook.certManager.enabled }}
+  - TLS managed by cert-manager (Certificate {{ include "sonarqube-operator.webhookCertificateName" . }}).
+{{- else }}
+  - TLS sourced from secret {{ include "sonarqube-operator.webhookSecretName" . }} (must exist).
+{{- end }}
+{{- end }}
+
+For docs and CRD reference: https://github.com/BEIRDINH0S/sonarqube-operator

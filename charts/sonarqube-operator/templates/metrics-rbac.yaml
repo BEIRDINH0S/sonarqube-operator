@@ -1,0 +1,49 @@
+{{- if and .Values.rbac.create .Values.metrics.enabled .Values.metrics.secure -}}
+{{- /*
+When the metrics endpoint is served over HTTPS the manager runs the
+controller-runtime authn/authz filter, which calls TokenReview and
+SubjectAccessReview against the API server. The operator's ServiceAccount
+needs `create` on those subresources.
+
+`metrics-reader` is the role admins bind to Prometheus' SA so it can scrape
+nonResourceURL /metrics.
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "sonarqube-operator.fullname" . }}-metrics-auth
+  labels:
+    {{- include "sonarqube-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [authentication.k8s.io]
+    resources: [tokenreviews]
+    verbs: [create]
+  - apiGroups: [authorization.k8s.io]
+    resources: [subjectaccessreviews]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "sonarqube-operator.fullname" . }}-metrics-auth
+  labels:
+    {{- include "sonarqube-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "sonarqube-operator.fullname" . }}-metrics-auth
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "sonarqube-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "sonarqube-operator.fullname" . }}-metrics-reader
+  labels:
+    {{- include "sonarqube-operator.labels" . | nindent 4 }}
+rules:
+  - nonResourceURLs: ["/metrics"]
+    verbs: [get]
+{{- end }}
