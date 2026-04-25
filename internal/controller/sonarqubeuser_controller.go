@@ -179,6 +179,10 @@ func (r *SonarQubeUserReconciler) reconcileUser(ctx context.Context, user *sonar
 		return ctrl.Result{}, err
 	}
 
+	if err := sonarClient.UpdateUserScmAccounts(ctx, user.Spec.Login, user.Spec.ScmAccounts); err != nil {
+		r.Recorder.Event(user, corev1.EventTypeWarning, "ScmAccountsUpdateFailed", err.Error())
+	}
+
 	user.Status.Phase = phaseReady
 	user.Status.Active = existing.Active
 	apimeta.SetStatusCondition(&user.Status.Conditions, metav1.Condition{
@@ -226,6 +230,10 @@ func (r *SonarQubeUserReconciler) createUser(ctx context.Context, user *sonarqub
 
 	if err := r.reconcileGroups(ctx, user, sonarClient); err != nil {
 		return ctrl.Result{}, err
+	}
+
+	if err := sonarClient.UpdateUserScmAccounts(ctx, user.Spec.Login, user.Spec.ScmAccounts); err != nil {
+		r.Recorder.Event(user, corev1.EventTypeWarning, "ScmAccountsUpdateFailed", err.Error())
 	}
 
 	user.Status.Phase = phaseReady

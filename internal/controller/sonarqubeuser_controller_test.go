@@ -289,4 +289,26 @@ var _ = Describe("SonarQubeUser Controller", func() {
 		Expect(mock.removeUserFromGroupCalls).To(Equal(1))
 		Expect(mock.addUserToGroupCalls).To(Equal(0))
 	})
+
+	It("propage scmAccounts via UpdateUserScmAccounts à chaque reconcile", func() {
+		instanceName := "user-instance-scm"
+		userName := "user-scm"
+		nn := types.NamespacedName{Name: userName, Namespace: "default"}
+		defer deleteUser(userName)
+		defer deleteInstanceIfExists(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		u := newTestUser(userName, instanceName, "carol")
+		u.Spec.ScmAccounts = []string{"carol@example.com", "carol-bot"}
+		Expect(k8sClient.Create(ctx, u)).To(Succeed())
+
+		mock := &mockSonarClient{
+			getUserResult: &sonarqube.User{Login: "carol", Name: "John Doe", Email: "john@example.com", Active: true},
+		}
+		_, err := newUserReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(mock.updateScmAccountsCalls).To(Equal(1))
+		Expect(mock.lastSetScmAccounts).To(Equal([]string{"carol@example.com", "carol-bot"}))
+	})
 })
