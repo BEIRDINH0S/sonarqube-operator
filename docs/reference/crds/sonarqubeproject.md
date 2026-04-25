@@ -112,14 +112,18 @@ allow it). Drift detection runs on this field.
 | **Required** | no |
 | **Default** | `main` |
 
-!!! warning "Currently a no-op"
-    This field is reserved in the spec for forward-compatibility but the
-    operator does **not** use it today: projects are created with
-    SonarQube's own default branch name and the operator never calls
-    `/api/project_branches/rename`. If your `sonar-scanner` analyses run
-    on a branch named anything other than `main` (or whatever SonarQube
-    default applies), you must rename the main branch manually through
-    the SonarQube UI / API once.
+The name the project's main branch should have in SonarQube. SonarQube's
+`POST /api/projects/create` doesn't accept a branch name, so the operator
+creates the project first (with SonarQube's own default branch) and then
+reconciles the branch separately on every sync:
+
+1. `GET /api/project_branches/list?project=<key>` to read the live main branch.
+2. If it differs from `spec.mainBranch`, `POST /api/project_branches/rename`
+   is called.
+
+A failure on the rename does **not** mark the project `Failed` — a `Warning`
+event is emitted and reconciliation continues, so the project still becomes
+`Ready`. Leave the field empty to let SonarQube's default stand.
 
 ### `qualityGateRef`
 
@@ -219,11 +223,13 @@ status:
 ### Creation
 
 1. The controller calls `POST /api/projects/create` with the spec key,
-   name, visibility, and main branch.
-2. If `qualityGateRef` is set, calls `POST /api/qualitygates/select`.
-3. If `ciToken.enabled: true`, generates a token via
+   name, and visibility.
+2. If `spec.mainBranch` is set and differs from the SonarQube default,
+   the operator calls `POST /api/project_branches/rename` to align it.
+3. If `qualityGateRef` is set, calls `POST /api/qualitygates/select`.
+4. If `ciToken.enabled: true`, generates a token via
    `POST /api/user_tokens/generate` and writes the Secret.
-4. Updates `status.phase` to `Ready`.
+5. Updates `status.phase` to `Ready`.
 
 ### Updates and drift correction
 
@@ -235,7 +241,7 @@ On every reconcile, the operator reads the live project state via
 | `visibility` | If the live value differs from the spec, the operator calls `POST /api/projects/update_visibility`. True drift correction. |
 | `qualityGateRef` | Unconditionally re-asserted via `POST /api/qualitygates/select` on every reconcile when the field is non-empty. Effectively drift-correcting, but the operator does not read the live assignment first — it just re-pins the spec value. |
 | `name` | **Not corrected.** The operator does not call `update` for the display name. A UI rename will not be reverted. |
-| `mainBranch` | **Not used.** See the warning under [`mainBranch`](#mainbranch). |
+| `mainBranch` | If non-empty and the live branch differs from the spec, the operator calls `POST /api/project_branches/rename`. Errors are non-fatal — a `Warning` event is emitted and the project still becomes `Ready`. |
 | `key` | Immutable per CEL XValidation; the API rejects updates. |
 
 ### Deletion
