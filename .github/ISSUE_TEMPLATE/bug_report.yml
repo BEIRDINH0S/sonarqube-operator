@@ -1,0 +1,84 @@
+name: Bug report
+description: Something the operator does is wrong, broken, or unexpected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please fill in as much of
+        the form as you can — the operator logs and the CR YAML are usually what
+        we need first.
+  - type: input
+    id: operator-version
+    attributes:
+      label: Operator version
+      description: e.g. v0.5.0, or a commit SHA from main
+      placeholder: v0.5.0
+    validations:
+      required: true
+  - type: input
+    id: sonarqube-version
+    attributes:
+      label: SonarQube version
+      description: From `kubectl get sonarqubeinstance -o jsonpath='{.items[0].status.version}'`
+      placeholder: 10.3.0.82913
+    validations:
+      required: true
+  - type: input
+    id: kubernetes
+    attributes:
+      label: Kubernetes flavor and version
+      description: e.g. kind 0.31.0 / k8s 1.31, EKS 1.30, GKE Autopilot 1.31
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Install method
+      options:
+        - Helm chart (OCI)
+        - install.yaml (kubectl apply)
+        - kustomize from source
+        - Other / custom
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe the actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: what-expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Reproducer
+      description: |
+        The CR YAML and the kubectl commands that reproduce the problem.
+        Use the smallest minimal CR that still triggers it.
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: operator-logs
+    attributes:
+      label: Operator logs
+      description: |
+        `kubectl logs -n sonarqube-operator-system deploy/sonarqube-operator --tail=200`
+        (Trim or scrub anything sensitive — secrets, tokens, internal hostnames.)
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: cr-status
+    attributes:
+      label: CR status
+      description: |
+        `kubectl get <kind> <name> -n <ns> -o yaml` — the `.status` section is what we need.
+      render: yaml
