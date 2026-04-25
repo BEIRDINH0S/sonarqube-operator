@@ -117,6 +117,44 @@ spec:
                 items:
                   type: string
                 type: array
+              tokens:
+                description: |-
+                  tokens declares standalone user tokens to materialize as Kubernetes Secrets.
+                  Each token is independent of any project — for personal automation, read-only
+                  API access, or a global analysis token. Removing an entry revokes the token
+                  in SonarQube and deletes the Secret. To rotate, delete the Secret manually
+                  and the operator regenerates on the next reconcile.
+                items:
+                  description: UserToken declares a SonarQube user token stored in
+                    a Kubernetes Secret.
+                  properties:
+                    expiresIn:
+                      description: expiresIn sets the token's lifetime. If unset,
+                        the token never expires.
+                      type: string
+                    name:
+                      description: name is the SonarQube-side token name. Must be
+                        unique per user.
+                      minLength: 1
+                      type: string
+                    secretName:
+                      description: |-
+                        secretName is the Kubernetes Secret (in the user's namespace) to store the
+                        token under the key "token".
+                      minLength: 1
+                      type: string
+                    type:
+                      default: USER_TOKEN
+                      description: type is the SonarQube token type.
+                      enum:
+                      - USER_TOKEN
+                      - GLOBAL_ANALYSIS_TOKEN
+                      type: string
+                  required:
+                  - name
+                  - secretName
+                  type: object
+                type: array
             required:
             - instanceRef
             - login
@@ -192,6 +230,14 @@ spec:
                 description: |-
                   groups is the list of groups last synchronized by the operator.
                   Used to detect which groups should be removed if they are no longer in spec.groups.
+                items:
+                  type: string
+                type: array
+              managedTokens:
+                description: |-
+                  managedTokens tracks the names of standalone tokens the operator generated
+                  for this user. Names removed from spec.tokens but still in this list are
+                  revoked on the next reconcile.
                 items:
                   type: string
                 type: array

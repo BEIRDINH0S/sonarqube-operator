@@ -290,25 +290,49 @@ var _ = Describe("SonarQubeUser Controller", func() {
 		Expect(mock.addUserToGroupCalls).To(Equal(0))
 	})
 
-	It("propage scmAccounts via UpdateUserScmAccounts à chaque reconcile", func() {
-		instanceName := "user-instance-scm"
-		userName := "user-scm"
+	It("génère un Secret pour chaque token déclaré et révoque ceux retirés", func() {
+		instanceName := "user-instance-tokens"
+		userName := "user-tokens"
 		nn := types.NamespacedName{Name: userName, Namespace: "default"}
 		defer deleteUser(userName)
 		defer deleteInstanceIfExists(instanceName)
+		defer func() {
+			s := &corev1.Secret{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: "automation-token", Namespace: "default"}, s); err == nil {
+				_ = k8sClient.Delete(ctx, s)
+			}
+		}()
 
 		newReadyInstance(ctx, instanceName)
-		u := newTestUser(userName, instanceName, "carol")
-		u.Spec.ScmAccounts = []string{"carol@example.com", "carol-bot"}
+		u := newTestUser(userName, instanceName, "dave")
+		u.Spec.Tokens = []sonarqubev1alpha1.UserToken{
+			{Name: "automation", Type: "USER_TOKEN", SecretName: "automation-token"},
+		}
 		Expect(k8sClient.Create(ctx, u)).To(Succeed())
 
+		// Status: previously managed token "old-token" — must be revoked.
+		updated := &sonarqubev1alpha1.SonarQubeUser{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		updated.Status.ManagedTokens = []string{"old-token", "automation"}
+		Expect(k8sClient.Status().Update(ctx, updated)).To(Succeed())
+
 		mock := &mockSonarClient{
-			getUserResult: &sonarqube.User{Login: "carol", Name: "John Doe", Email: "john@example.com", Active: true},
+			getUserResult: &sonarqube.User{Login: "dave", Name: "John Doe", Email: "john@example.com", Active: true},
 		}
 		_, err := newUserReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(mock.updateScmAccountsCalls).To(Equal(1))
-		Expect(mock.lastSetScmAccounts).To(Equal([]string{"carol@example.com", "carol-bot"}))
+		Expect(mock.generateUserTokenCalls).To(Equal(1))
+		Expect(mock.generatedUserTokens).To(ConsistOf("dave:automation:USER_TOKEN"))
+		Expect(mock.revokeUserTokenCalls).To(Equal(1))
+		Expect(mock.revokedUserTokens).To(ConsistOf("dave:old-token"))
+
+		secret := &corev1.Secret{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "automation-token", Namespace: "default"}, secret)).To(Succeed())
+		Expect(string(secret.Data["token"])).To(Equal("sqp_automation"))
+
+		final := &sonarqubev1alpha1.SonarQubeUser{}
+		Expect(k8sClient.Get(ctx, nn, final)).To(Succeed())
+		Expect(final.Status.ManagedTokens).To(Equal([]string{"automation"}))
 	})
 })

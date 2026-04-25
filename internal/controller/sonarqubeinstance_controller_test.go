@@ -101,6 +101,12 @@ type mockSonarClient struct {
 	removeUserFromGroupCalls int
 	updateScmAccountsCalls   int
 	lastSetScmAccounts       []string
+	// user tokens (standalone)
+	generateUserTokenCalls  int
+	generatedUserTokens     []string // "<login>:<name>:<type>"
+	revokeUserTokenCalls    int
+	revokedUserTokens       []string // "<login>:<name>"
+	generateUserTokenResult *sonarqube.Token
 }
 
 func (m *mockSonarClient) GetStatus(_ context.Context) (string, string, error) {
@@ -244,6 +250,19 @@ func (m *mockSonarClient) RemoveUserFromGroup(_ context.Context, _, _ string) er
 func (m *mockSonarClient) UpdateUserScmAccounts(_ context.Context, _ string, scmAccounts []string) error {
 	m.updateScmAccountsCalls++
 	m.lastSetScmAccounts = scmAccounts
+	return nil
+}
+func (m *mockSonarClient) GenerateUserToken(_ context.Context, login, name, tokenType, _ string) (*sonarqube.Token, error) {
+	m.generateUserTokenCalls++
+	m.generatedUserTokens = append(m.generatedUserTokens, login+":"+name+":"+tokenType)
+	if m.generateUserTokenResult != nil {
+		return m.generateUserTokenResult, nil
+	}
+	return &sonarqube.Token{Name: name, Token: "sqp_" + name}, nil
+}
+func (m *mockSonarClient) RevokeUserToken(_ context.Context, login, name string) error {
+	m.revokeUserTokenCalls++
+	m.revokedUserTokens = append(m.revokedUserTokens, login+":"+name)
 	return nil
 }
 
