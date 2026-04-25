@@ -163,17 +163,11 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "67bca3fe.sonarqube.io",
-		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
-		// when the Manager ends. This requires the binary to immediately end when the
-		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
-		// speeds up voluntary leader transitions as the new leader don't have to wait
-		// LeaseDuration time first.
-		//
-		// In the default scaffold provided, the program ends immediately after
-		// the manager stops, so would be fine to enable this option. However,
-		// if you are doing or is intended to do any operation such as perform cleanups
-		// after the manager stops then its usage might be unsafe.
-		// LeaderElectionReleaseOnCancel: true,
+		// LeaderElectionReleaseOnCancel lets the leader step down immediately when
+		// the manager exits, so the next replica can acquire the lease without
+		// waiting for the full LeaseDuration. Safe here because the manager exits
+		// cleanly via signal handling with no post-stop work.
+		LeaderElectionReleaseOnCancel: true,
 	})
 	if err != nil {
 		setupLog.Error(err, "Failed to start manager")
@@ -225,6 +219,17 @@ func main() {
 		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "SonarQubeQualityGate")
+		os.Exit(1)
+	}
+	if err := (&controller.SonarQubeUserReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("sonarqubeuser-controller"), //nolint:staticcheck
+		NewSonarClient: func(baseURL, token string) sonarqube.Client {
+			return sonarqube.NewClient(baseURL, token)
+		},
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "SonarQubeUser")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

@@ -78,6 +78,14 @@ type Token struct {
 	Token string `json:"token"`
 }
 
+// User représente un utilisateur SonarQube.
+type User struct {
+	Login  string `json:"login"`
+	Name   string `json:"name"`
+	Email  string `json:"email"`
+	Active bool   `json:"active"`
+}
+
 // --- Interface ---
 
 // Client définit toutes les opérations que l'opérateur effectue sur l'API SonarQube.
@@ -118,6 +126,12 @@ type Client interface {
 	// Tokens
 	GenerateToken(ctx context.Context, name, tokenType, projectKey string) (*Token, error)
 	RevokeToken(ctx context.Context, name string) error
+
+	// Users
+	GetUser(ctx context.Context, login string) (*User, error)
+	CreateUser(ctx context.Context, login, name, email, password string) error
+	UpdateUser(ctx context.Context, login, name, email string) error
+	DeactivateUser(ctx context.Context, login string) error
 }
 
 // --- Implémentation HTTP ---
@@ -524,5 +538,61 @@ func (c *httpClient) GenerateToken(ctx context.Context, name, tokenType, project
 
 func (c *httpClient) RevokeToken(ctx context.Context, name string) error {
 	_, err := c.do(ctx, http.MethodPost, "/api/user_tokens/revoke", url.Values{"name": {name}})
+	return err
+}
+
+// --- Users ---
+
+type usersSearchResponse struct {
+	Users []User `json:"users"`
+}
+
+func (c *httpClient) GetUser(ctx context.Context, login string) (*User, error) {
+	body, err := c.do(ctx, http.MethodGet, "/api/users/search", url.Values{"q": {login}})
+	if err != nil {
+		return nil, err
+	}
+	var result usersSearchResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	for i := range result.Users {
+		if result.Users[i].Login == login {
+			return &result.Users[i], nil
+		}
+	}
+	return nil, fmt.Errorf("user %q: %w", login, ErrNotFound)
+}
+
+func (c *httpClient) CreateUser(ctx context.Context, login, name, email, password string) error {
+	params := url.Values{
+		"login": {login},
+		"name":  {name},
+		"local": {"true"},
+	}
+	if email != "" {
+		params.Set("email", email)
+	}
+	if password != "" {
+		params.Set("password", password)
+	}
+	_, err := c.do(ctx, http.MethodPost, "/api/users/create", params)
+	return err
+}
+
+func (c *httpClient) UpdateUser(ctx context.Context, login, name, email string) error {
+	params := url.Values{
+		"login": {login},
+		"name":  {name},
+	}
+	if email != "" {
+		params.Set("email", email)
+	}
+	_, err := c.do(ctx, http.MethodPost, "/api/users/update", params)
+	return err
+}
+
+func (c *httpClient) DeactivateUser(ctx context.Context, login string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/users/deactivate", url.Values{"login": {login}})
 	return err
 }

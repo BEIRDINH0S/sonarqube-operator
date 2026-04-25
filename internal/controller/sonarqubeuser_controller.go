@@ -1,0 +1,246 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	corev1 "k8s.io/api/core/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	sonarqubev1alpha1 "github.com/BEIRDINH0S/sonarqube-operator/api/v1alpha1"
+	"github.com/BEIRDINH0S/sonarqube-operator/internal/sonarqube"
+)
+
+const userFinalizer = "sonarqube.io/user-finalizer"
+
+// SonarQubeUserReconciler reconciles a SonarQubeUser object.
+type SonarQubeUserReconciler struct {
+	client.Client
+	Scheme         *runtime.Scheme
+	Recorder       record.EventRecorder
+	NewSonarClient func(baseURL, token string) sonarqube.Client
+}
+
+// +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubeusers,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubeusers/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=sonarqube.sonarqube.io,resources=sonarqubeusers/finalizers,verbs=update
+
+func (r *SonarQubeUserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	user := &sonarqubev1alpha1.SonarQubeUser{}
+	if err := r.Get(ctx, req.NamespacedName, user); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	instanceNamespace := user.Spec.InstanceRef.Namespace
+	if instanceNamespace == "" {
+		instanceNamespace = user.Namespace
+	}
+
+	instance := &sonarqubev1alpha1.SonarQubeInstance{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      user.Spec.InstanceRef.Name,
+		Namespace: instanceNamespace,
+	}, instance); err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			return ctrl.Result{}, err
+		}
+		if controllerutil.ContainsFinalizer(user, userFinalizer) {
+			controllerutil.RemoveFinalizer(user, userFinalizer)
+			return ctrl.Result{}, r.Update(ctx, user)
+		}
+		return ctrl.Result{}, nil
+	}
+
+	if instance.Status.Phase != conditionReady {
+		log.Info("Instance not ready, requeueing", "instance", instance.Name)
+		user.Status.Phase = phasePending
+		apimeta.SetStatusCondition(&user.Status.Conditions, metav1.Condition{
+			Type:               conditionReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "InstanceNotReady",
+			Message:            fmt.Sprintf("SonarQubeInstance %q is not ready", instance.Name),
+			ObservedGeneration: user.Generation,
+		})
+		_ = r.Status().Update(ctx, user)
+		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
+	}
+
+	token, err := getInstanceAdminToken(ctx, r.Client, instance)
+	if err != nil {
+		if !user.DeletionTimestamp.IsZero() {
+			if controllerutil.ContainsFinalizer(user, userFinalizer) {
+				controllerutil.RemoveFinalizer(user, userFinalizer)
+				return ctrl.Result{}, r.Update(ctx, user)
+			}
+			return ctrl.Result{}, nil
+		}
+		log.Info("Admin token not yet available, requeueing", "error", err.Error())
+		user.Status.Phase = phasePending
+		_ = r.Status().Update(ctx, user)
+		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
+	}
+	sonarClient := r.NewSonarClient(instance.Status.URL, token)
+
+	if !user.DeletionTimestamp.IsZero() {
+		return r.handleDeletion(ctx, user, sonarClient)
+	}
+
+	if !controllerutil.ContainsFinalizer(user, userFinalizer) {
+		controllerutil.AddFinalizer(user, userFinalizer)
+		if err := r.Update(ctx, user); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	return r.reconcileUser(ctx, user, sonarClient)
+}
+
+func (r *SonarQubeUserReconciler) reconcileUser(ctx context.Context, user *sonarqubev1alpha1.SonarQubeUser, sonarClient sonarqube.Client) (ctrl.Result, error) {
+	existing, err := sonarClient.GetUser(ctx, user.Spec.Login)
+	if err != nil && !errors.Is(err, sonarqube.ErrNotFound) {
+		return ctrl.Result{}, fmt.Errorf("getting user: %w", err)
+	}
+
+	if existing == nil {
+		return r.createUser(ctx, user, sonarClient)
+	}
+
+	// User exists — sync name and email if they drifted
+	if existing.Name != user.Spec.Name || existing.Email != user.Spec.Email {
+		if err := sonarClient.UpdateUser(ctx, user.Spec.Login, user.Spec.Name, user.Spec.Email); err != nil {
+			return ctrl.Result{}, fmt.Errorf("updating user: %w", err)
+		}
+		r.Recorder.Event(user, corev1.EventTypeNormal, "Updated",
+			fmt.Sprintf("User %q updated (name/email synced)", user.Spec.Login))
+	}
+
+	user.Status.Phase = conditionReady
+	user.Status.Active = existing.Active
+	apimeta.SetStatusCondition(&user.Status.Conditions, metav1.Condition{
+		Type:               conditionReady,
+		Status:             metav1.ConditionTrue,
+		Reason:             "Ready",
+		Message:            fmt.Sprintf("User %q is active in SonarQube", user.Spec.Login),
+		ObservedGeneration: user.Generation,
+	})
+	return ctrl.Result{}, r.Status().Update(ctx, user)
+}
+
+func (r *SonarQubeUserReconciler) createUser(ctx context.Context, user *sonarqubev1alpha1.SonarQubeUser, sonarClient sonarqube.Client) (ctrl.Result, error) {
+	password, err := r.readPasswordSecret(ctx, user)
+	if err != nil {
+		user.Status.Phase = phaseFailed
+		apimeta.SetStatusCondition(&user.Status.Conditions, metav1.Condition{
+			Type:               conditionReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "PasswordSecretError",
+			Message:            err.Error(),
+			ObservedGeneration: user.Generation,
+		})
+		_ = r.Status().Update(ctx, user)
+		r.Recorder.Event(user, corev1.EventTypeWarning, "PasswordSecretError", err.Error())
+		return ctrl.Result{}, err
+	}
+
+	if err := sonarClient.CreateUser(ctx, user.Spec.Login, user.Spec.Name, user.Spec.Email, password); err != nil {
+		user.Status.Phase = phaseFailed
+		apimeta.SetStatusCondition(&user.Status.Conditions, metav1.Condition{
+			Type:               conditionReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "CreateFailed",
+			Message:            err.Error(),
+			ObservedGeneration: user.Generation,
+		})
+		_ = r.Status().Update(ctx, user)
+		r.Recorder.Event(user, corev1.EventTypeWarning, "CreateFailed", err.Error())
+		return ctrl.Result{}, fmt.Errorf("creating user: %w", err)
+	}
+
+	r.Recorder.Event(user, corev1.EventTypeNormal, "Created",
+		fmt.Sprintf("User %q created in SonarQube", user.Spec.Login))
+
+	user.Status.Phase = conditionReady
+	user.Status.Active = true
+	apimeta.SetStatusCondition(&user.Status.Conditions, metav1.Condition{
+		Type:               conditionReady,
+		Status:             metav1.ConditionTrue,
+		Reason:             "Ready",
+		Message:            fmt.Sprintf("User %q created and active", user.Spec.Login),
+		ObservedGeneration: user.Generation,
+	})
+	return ctrl.Result{}, r.Status().Update(ctx, user)
+}
+
+// readPasswordSecret reads the password from the Secret referenced by spec.passwordSecretRef.
+// Returns an empty string if no secret is referenced.
+func (r *SonarQubeUserReconciler) readPasswordSecret(ctx context.Context, user *sonarqubev1alpha1.SonarQubeUser) (string, error) {
+	if user.Spec.PasswordSecretRef == nil {
+		return "", nil
+	}
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      user.Spec.PasswordSecretRef.Name,
+		Namespace: user.Namespace,
+	}, secret); err != nil {
+		return "", fmt.Errorf("getting password secret %q: %w", user.Spec.PasswordSecretRef.Name, err)
+	}
+	pwd := string(secret.Data["password"])
+	if pwd == "" {
+		return "", fmt.Errorf("password secret %q missing key 'password'", user.Spec.PasswordSecretRef.Name)
+	}
+	return pwd, nil
+}
+
+func (r *SonarQubeUserReconciler) handleDeletion(ctx context.Context, user *sonarqubev1alpha1.SonarQubeUser, sonarClient sonarqube.Client) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(user, userFinalizer) {
+		return ctrl.Result{}, nil
+	}
+
+	if err := sonarClient.DeactivateUser(ctx, user.Spec.Login); err != nil {
+		if !errors.Is(err, sonarqube.ErrNotFound) {
+			r.Recorder.Event(user, corev1.EventTypeWarning, "DeactivateWarning",
+				fmt.Sprintf("Could not deactivate user %q in SonarQube (continuing cleanup): %s", user.Spec.Login, err.Error()))
+		}
+	} else {
+		r.Recorder.Event(user, corev1.EventTypeNormal, "Deactivated",
+			fmt.Sprintf("User %q deactivated in SonarQube", user.Spec.Login))
+	}
+
+	controllerutil.RemoveFinalizer(user, userFinalizer)
+	return ctrl.Result{}, r.Update(ctx, user)
+}
+
+// SetupWithManager sets up the controller with the Manager.
+func (r *SonarQubeUserReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&sonarqubev1alpha1.SonarQubeUser{}).
+		Named("sonarqubeuser").
+		Complete(r)
+}

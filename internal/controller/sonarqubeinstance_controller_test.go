@@ -68,6 +68,13 @@ type mockSonarClient struct {
 	addConditionCalls       int
 	removeConditionCalls    int
 	setAsDefaultCalls       int
+	// user
+	getUserResult       *sonarqube.User
+	getUserErr          error
+	createUserCalls     int
+	createUserErr       error
+	updateUserCalls     int
+	deactivateUserCalls int
 }
 
 func (m *mockSonarClient) GetStatus(_ context.Context) (string, string, error) {
@@ -143,6 +150,24 @@ func (m *mockSonarClient) GenerateToken(_ context.Context, _, _, _ string) (*son
 	return m.generateTokenResult, m.generateTokenErr
 }
 func (m *mockSonarClient) RevokeToken(_ context.Context, _ string) error { return nil }
+func (m *mockSonarClient) GetUser(_ context.Context, _ string) (*sonarqube.User, error) {
+	if m.getUserResult == nil {
+		return nil, sonarqube.ErrNotFound
+	}
+	return m.getUserResult, m.getUserErr
+}
+func (m *mockSonarClient) CreateUser(_ context.Context, _, _, _, _ string) error {
+	m.createUserCalls++
+	return m.createUserErr
+}
+func (m *mockSonarClient) UpdateUser(_ context.Context, _, _, _ string) error {
+	m.updateUserCalls++
+	return nil
+}
+func (m *mockSonarClient) DeactivateUser(_ context.Context, _ string) error {
+	m.deactivateUserCalls++
+	return nil
+}
 
 // newTestReconciler crée un reconciler prêt pour les tests avec un mock client injecté.
 func newTestReconciler(mock *mockSonarClient) *SonarQubeInstanceReconciler {

@@ -248,6 +248,66 @@ func TestGetQualityGate_NetworkError_NotTreatedAsNotFound(t *testing.T) {
 		"network error should not be treated as ErrNotFound")
 }
 
+func TestGetUser(t *testing.T) {
+	client := newTestServer(t, map[string]http.HandlerFunc{
+		"/api/users/search": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"users":[{"login":"john.doe","name":"John Doe","email":"john@example.com","active":true}]}`))
+		},
+	})
+
+	user, err := client.GetUser(context.Background(), "john.doe")
+	require.NoError(t, err)
+	assert.Equal(t, "john.doe", user.Login)
+	assert.Equal(t, "John Doe", user.Name)
+	assert.True(t, user.Active)
+}
+
+func TestGetUser_NotFound(t *testing.T) {
+	client := newTestServer(t, map[string]http.HandlerFunc{
+		"/api/users/search": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"users":[]}`))
+		},
+	})
+
+	_, err := client.GetUser(context.Background(), "unknown")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, sonarqube.ErrNotFound)
+}
+
+func TestCreateUser(t *testing.T) {
+	var gotLogin, gotName string
+	client := newTestServer(t, map[string]http.HandlerFunc{
+		"/api/users/create": func(w http.ResponseWriter, r *http.Request) {
+			_ = r.ParseForm()
+			gotLogin = r.FormValue("login")
+			gotName = r.FormValue("name")
+			w.WriteHeader(http.StatusOK)
+		},
+	})
+
+	err := client.CreateUser(context.Background(), "john.doe", "John Doe", "john@example.com", "secret")
+	require.NoError(t, err)
+	assert.Equal(t, "john.doe", gotLogin)
+	assert.Equal(t, "John Doe", gotName)
+}
+
+func TestDeactivateUser(t *testing.T) {
+	var gotLogin string
+	client := newTestServer(t, map[string]http.HandlerFunc{
+		"/api/users/deactivate": func(w http.ResponseWriter, r *http.Request) {
+			_ = r.ParseForm()
+			gotLogin = r.FormValue("login")
+			w.WriteHeader(http.StatusOK)
+		},
+	})
+
+	err := client.DeactivateUser(context.Background(), "john.doe")
+	require.NoError(t, err)
+	assert.Equal(t, "john.doe", gotLogin)
+}
+
 func TestBearerTokenSent(t *testing.T) {
 	var receivedAuth string
 	client := newTestServer(t, map[string]http.HandlerFunc{
