@@ -123,7 +123,7 @@ func (r *SonarQubeProjectReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		_ = r.Status().Update(ctx, project)
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
-	sonarClient := r.NewSonarClient(instance.Status.URL, token)
+	sonarClient := r.NewSonarClient(instanceAPIURL(instance), token)
 
 	if !controllerutil.ContainsFinalizer(project, projectFinalizer) {
 		controllerutil.AddFinalizer(project, projectFinalizer)
@@ -152,7 +152,7 @@ func (r *SonarQubeProjectReconciler) finalizeDeletion(ctx context.Context, proje
 
 	if instance.Status.Phase == phaseReady {
 		if token, err := getInstanceAdminToken(ctx, r.Client, instance); err == nil {
-			sonarClient := r.NewSonarClient(instance.Status.URL, token)
+			sonarClient := r.NewSonarClient(instanceAPIURL(instance), token)
 			return r.handleDeletion(ctx, project, sonarClient)
 		}
 	}

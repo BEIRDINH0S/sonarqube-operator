@@ -109,7 +109,7 @@ func (r *SonarQubeInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, fmt.Errorf("reconciling Ingress: %w", err)
 	}
 
-	serviceURL := fmt.Sprintf("http://%s.%s:9000", instance.Name, instance.Namespace)
+	serviceURL := instanceAPIURL(instance)
 	result := r.reconcileHealth(ctx, instance, serviceURL)
 
 	if instance.Spec.Ingress.Enabled && instance.Spec.Ingress.Host != "" {
