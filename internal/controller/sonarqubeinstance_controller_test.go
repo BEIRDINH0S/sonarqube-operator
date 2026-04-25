@@ -81,6 +81,15 @@ type mockSonarClient struct {
 	setSettings       map[string]string
 	resetSettingCalls int
 	resetSettingsKeys []string
+	// project permissions
+	addUserProjectPermCalls     int
+	removeUserProjectPermCalls  int
+	addGroupProjectPermCalls    int
+	removeGroupProjectPermCalls int
+	addedUserProjectGrants      []string // "login:permission"
+	removedUserProjectGrants    []string
+	addedGroupProjectGrants     []string
+	removedGroupProjectGrants   []string
 	// auth
 	validateAuthErr error
 	// quality gate
@@ -201,6 +210,26 @@ func (m *mockSonarClient) SetSetting(_ context.Context, _, key, value string) er
 func (m *mockSonarClient) ResetSettings(_ context.Context, _ string, keys []string) error {
 	m.resetSettingCalls++
 	m.resetSettingsKeys = append(m.resetSettingsKeys, keys...)
+	return nil
+}
+func (m *mockSonarClient) AddUserProjectPermission(_ context.Context, _, login, permission string) error {
+	m.addUserProjectPermCalls++
+	m.addedUserProjectGrants = append(m.addedUserProjectGrants, login+":"+permission)
+	return nil
+}
+func (m *mockSonarClient) RemoveUserProjectPermission(_ context.Context, _, login, permission string) error {
+	m.removeUserProjectPermCalls++
+	m.removedUserProjectGrants = append(m.removedUserProjectGrants, login+":"+permission)
+	return nil
+}
+func (m *mockSonarClient) AddGroupProjectPermission(_ context.Context, _, groupName, permission string) error {
+	m.addGroupProjectPermCalls++
+	m.addedGroupProjectGrants = append(m.addedGroupProjectGrants, groupName+":"+permission)
+	return nil
+}
+func (m *mockSonarClient) RemoveGroupProjectPermission(_ context.Context, _, groupName, permission string) error {
+	m.removeGroupProjectPermCalls++
+	m.removedGroupProjectGrants = append(m.removedGroupProjectGrants, groupName+":"+permission)
 	return nil
 }
 func (m *mockSonarClient) ListQualityGates(_ context.Context) ([]sonarqube.QualityGate, error) {

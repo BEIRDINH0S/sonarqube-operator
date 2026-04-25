@@ -75,6 +75,13 @@ type SonarQubeProjectSpec struct {
 	// +optional
 	// +kubebuilder:validation:XValidation:rule="self.all(k, !k.startsWith('sonar.auth.'))",message="sonar.auth.* keys are reserved and cannot be managed via SonarQubeProject"
 	Settings map[string]string `json:"settings,omitempty"`
+
+	// permissions grants project-scoped permissions to users and/or groups.
+	// The operator only ever removes grants it created (tracked in
+	// status.managedPermissions); permissions assigned via the SonarQube UI
+	// are left alone.
+	// +optional
+	Permissions []ProjectPermission `json:"permissions,omitempty"`
 }
 
 // ProjectLink is a named URL surfaced on a project's overview page.
@@ -88,6 +95,25 @@ type ProjectLink struct {
 	// url is the link target.
 	// +kubebuilder:validation:MinLength=1
 	URL string `json:"url"`
+}
+
+// ProjectPermission grants a set of project permissions to either a user or a group.
+// Exactly one of user / group must be set.
+// +kubebuilder:validation:XValidation:rule="(has(self.user) && size(self.user) > 0) != (has(self.group) && size(self.group) > 0)",message="exactly one of user or group must be set"
+type ProjectPermission struct {
+	// user is the SonarQube login the permissions apply to.
+	// +optional
+	User string `json:"user,omitempty"`
+
+	// group is the SonarQube group name the permissions apply to.
+	// +optional
+	Group string `json:"group,omitempty"`
+
+	// permissions is the list of permissions to grant.
+	// Valid values: admin, codeviewer, issueadmin, securityhotspotadmin, scan, user.
+	// +kubebuilder:validation:MinItems=1
+	// +listType=set
+	Permissions []string `json:"permissions"`
 }
 
 // CITokenSpec configure la génération du token CI.
@@ -134,6 +160,13 @@ type SonarQubeProjectStatus struct {
 	// reset on the next reconcile.
 	// +optional
 	ManagedSettings []string `json:"managedSettings,omitempty"`
+
+	// managedPermissions tracks the (subjectKind, subject, permission) grants
+	// the operator currently owns on the project. Grants in this list that
+	// no longer match spec.permissions are removed on the next reconcile.
+	// Format: "user:alice:admin", "group:dev-team:scan".
+	// +optional
+	ManagedPermissions []string `json:"managedPermissions,omitempty"`
 
 	// +listType=map
 	// +listMapKey=type

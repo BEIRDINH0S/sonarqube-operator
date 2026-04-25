@@ -127,6 +127,42 @@ spec:
                 description: name est le nom affiché du projet dans SonarQube.
                 minLength: 1
                 type: string
+              permissions:
+                description: |-
+                  permissions grants project-scoped permissions to users and/or groups.
+                  The operator only ever removes grants it created (tracked in
+                  status.managedPermissions); permissions assigned via the SonarQube UI
+                  are left alone.
+                items:
+                  description: |-
+                    ProjectPermission grants a set of project permissions to either a user or a group.
+                    Exactly one of user / group must be set.
+                  properties:
+                    group:
+                      description: group is the SonarQube group name the permissions
+                        apply to.
+                      type: string
+                    permissions:
+                      description: |-
+                        permissions is the list of permissions to grant.
+                        Valid values: admin, codeviewer, issueadmin, securityhotspotadmin, scan, user.
+                      items:
+                        type: string
+                      minItems: 1
+                      type: array
+                      x-kubernetes-list-type: set
+                    user:
+                      description: user is the SonarQube login the permissions apply
+                        to.
+                      type: string
+                  required:
+                  - permissions
+                  type: object
+                  x-kubernetes-validations:
+                  - message: exactly one of user or group must be set
+                    rule: (has(self.user) && size(self.user) > 0) != (has(self.group)
+                      && size(self.group) > 0)
+                type: array
               qualityGateRef:
                 description: qualityGateRef est le nom du SonarQubeQualityGate à associer
                   au projet.
@@ -231,6 +267,15 @@ spec:
                   managedLinkNames tracks the names of project links the operator created.
                   Used to decide which links to remove when they leave spec.links — links
                   created directly via the UI are not in this list and stay untouched.
+                items:
+                  type: string
+                type: array
+              managedPermissions:
+                description: |-
+                  managedPermissions tracks the (subjectKind, subject, permission) grants
+                  the operator currently owns on the project. Grants in this list that
+                  no longer match spec.permissions are removed on the next reconcile.
+                  Format: "user:alice:admin", "group:dev-team:scan".
                 items:
                   type: string
                 type: array

@@ -135,6 +135,14 @@ type Client interface {
 	SetSetting(ctx context.Context, projectKey, key, value string) error
 	// ResetSettings clears project-scoped settings via /api/settings/reset.
 	ResetSettings(ctx context.Context, projectKey string, keys []string) error
+	// AddUserProjectPermission grants a project permission to a user.
+	AddUserProjectPermission(ctx context.Context, projectKey, login, permission string) error
+	// RemoveUserProjectPermission revokes a project permission from a user.
+	RemoveUserProjectPermission(ctx context.Context, projectKey, login, permission string) error
+	// AddGroupProjectPermission grants a project permission to a group.
+	AddGroupProjectPermission(ctx context.Context, projectKey, groupName, permission string) error
+	// RemoveGroupProjectPermission revokes a project permission from a group.
+	RemoveGroupProjectPermission(ctx context.Context, projectKey, groupName, permission string) error
 
 	// Quality Gates
 	ListQualityGates(ctx context.Context) ([]QualityGate, error)
@@ -582,6 +590,42 @@ func (c *httpClient) ResetSettings(ctx context.Context, projectKey string, keys 
 	_, err := c.do(ctx, http.MethodPost, "/api/settings/reset", url.Values{
 		"component": {projectKey},
 		"keys":      {strings.Join(keys, ",")},
+	})
+	return err
+}
+
+func (c *httpClient) AddUserProjectPermission(ctx context.Context, projectKey, login, permission string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/permissions/add_user", url.Values{
+		"login":      {login},
+		"projectKey": {projectKey},
+		"permission": {permission},
+	})
+	return err
+}
+
+func (c *httpClient) RemoveUserProjectPermission(ctx context.Context, projectKey, login, permission string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/permissions/remove_user", url.Values{
+		"login":      {login},
+		"projectKey": {projectKey},
+		"permission": {permission},
+	})
+	return err
+}
+
+func (c *httpClient) AddGroupProjectPermission(ctx context.Context, projectKey, groupName, permission string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/permissions/add_group", url.Values{
+		"groupName":  {groupName},
+		"projectKey": {projectKey},
+		"permission": {permission},
+	})
+	return err
+}
+
+func (c *httpClient) RemoveGroupProjectPermission(ctx context.Context, projectKey, groupName, permission string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/permissions/remove_group", url.Values{
+		"groupName":  {groupName},
+		"projectKey": {projectKey},
+		"permission": {permission},
 	})
 	return err
 }

@@ -177,6 +177,64 @@ var _ = Describe("SonarQubeProject Controller", func() {
 		Expect(err.Error()).To(ContainSubstring("sonar.auth.* keys are reserved"))
 	})
 
+	It("rejette une permission sans user ni group", func() {
+		p := &sonarqubev1alpha1.SonarQubeProject{
+			ObjectMeta: metav1.ObjectMeta{Name: "proj-bad-perm", Namespace: "default"},
+			Spec: sonarqubev1alpha1.SonarQubeProjectSpec{
+				InstanceRef: sonarqubev1alpha1.InstanceRef{Name: "any"},
+				Key:         "any",
+				Name:        "any",
+				Visibility:  "private",
+				Permissions: []sonarqubev1alpha1.ProjectPermission{
+					{Permissions: []string{"admin"}},
+				},
+			},
+		}
+		err := k8sClient.Create(ctx, p)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("exactly one of user or group must be set"))
+	})
+
+	It("applique les permissions et révoque celles retirées du spec", func() {
+		instanceName := "proj-instance-perms"
+		projectName := "proj-perms"
+		nn := types.NamespacedName{Name: projectName, Namespace: "default"}
+		defer deleteProject(projectName)
+		defer deleteInstanceIfExists(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		p := newTestProject(projectName, instanceName, "proj-perms-key")
+		p.Spec.Permissions = []sonarqubev1alpha1.ProjectPermission{
+			{User: "alice", Permissions: []string{"admin"}},
+			{Group: "dev-team", Permissions: []string{"scan"}},
+		}
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+
+		// Status: previously managed "user:bob:admin" → must be revoked.
+		updated := &sonarqubev1alpha1.SonarQubeProject{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		updated.Status.ManagedPermissions = []string{"user:alice:admin", "user:bob:admin"}
+		Expect(k8sClient.Status().Update(ctx, updated)).To(Succeed())
+
+		mock := &mockSonarClient{
+			getProjectResult: &sonarqube.Project{Key: "proj-perms-key", Visibility: "private"},
+		}
+		_, err := newProjectReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		// alice:admin already managed → re-Add is fine (SonarQube is idempotent).
+		Expect(mock.addUserProjectPermCalls).To(BeNumerically(">=", 1))
+		Expect(mock.addedUserProjectGrants).To(ContainElement("alice:admin"))
+		Expect(mock.addGroupProjectPermCalls).To(Equal(1))
+		Expect(mock.addedGroupProjectGrants).To(ContainElement("dev-team:scan"))
+		Expect(mock.removeUserProjectPermCalls).To(Equal(1))
+		Expect(mock.removedUserProjectGrants).To(ContainElement("bob:admin"))
+
+		final := &sonarqubev1alpha1.SonarQubeProject{}
+		Expect(k8sClient.Get(ctx, nn, final)).To(Succeed())
+		Expect(final.Status.ManagedPermissions).To(ConsistOf("user:alice:admin", "group:dev-team:scan"))
+	})
+
 	It("ne recrée pas le projet s'il existe déjà dans SonarQube", func() {
 		instanceName := "proj-instance-exists"
 		projectName := "proj-exists"

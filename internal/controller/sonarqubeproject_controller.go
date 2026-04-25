@@ -20,6 +20,8 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -41,7 +43,11 @@ import (
 	"github.com/BEIRDINH0S/sonarqube-operator/internal/sonarqube"
 )
 
-const projectFinalizer = "sonarqube.io/project-finalizer"
+const (
+	projectFinalizer = "sonarqube.io/project-finalizer"
+	permSubjectUser  = "user"
+	permSubjectGroup = "group"
+)
 
 // SonarQubeProjectReconciler reconciles a SonarQubeProject object
 type SonarQubeProjectReconciler struct {
@@ -206,8 +212,9 @@ func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, proje
 		}
 	}
 
-	// Tags / links / settings — best-effort (non-fatal): a transient SonarQube
-	// error here shouldn't tip the project into Failed when the rest reconciled.
+	// Tags / links / settings / permissions — best-effort (non-fatal): a
+	// transient SonarQube error here shouldn't tip the project into Failed
+	// when the rest of the spec reconciled.
 	if err := sonarClient.SetProjectTags(ctx, project.Spec.Key, project.Spec.Tags); err != nil {
 		r.Recorder.Event(project, corev1.EventTypeWarning, "TagsUpdateFailed", err.Error())
 	}
@@ -216,6 +223,9 @@ func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, proje
 	}
 	if err := r.reconcileProjectSettings(ctx, project, sonarClient); err != nil {
 		r.Recorder.Event(project, corev1.EventTypeWarning, "SettingsUpdateFailed", err.Error())
+	}
+	if err := r.reconcileProjectPermissions(ctx, project, sonarClient); err != nil {
+		r.Recorder.Event(project, corev1.EventTypeWarning, "PermissionsUpdateFailed", err.Error())
 	}
 
 	// Gérer le token CI
@@ -311,6 +321,68 @@ func (r *SonarQubeProjectReconciler) reconcileProjectSettings(ctx context.Contex
 		managed = append(managed, k)
 	}
 	project.Status.ManagedSettings = managed
+	return nil
+}
+
+// reconcileProjectPermissions diffs spec.permissions against status.managedPermissions
+// and adds/removes only the grants the operator owns. Permissions assigned via
+// the SonarQube UI are never touched.
+//
+// Grants are encoded as "user:<login>:<permission>" or "group:<name>:<permission>".
+func (r *SonarQubeProjectReconciler) reconcileProjectPermissions(ctx context.Context, project *sonarqubev1alpha1.SonarQubeProject, sonarClient sonarqube.Client) error {
+	desired := make(map[string]bool)
+	for _, p := range project.Spec.Permissions {
+		kind, subject := permSubjectUser, p.User
+		if p.Group != "" {
+			kind, subject = permSubjectGroup, p.Group
+		}
+		for _, perm := range p.Permissions {
+			desired[kind+":"+subject+":"+perm] = true
+		}
+	}
+
+	for _, key := range project.Status.ManagedPermissions {
+		if desired[key] {
+			continue
+		}
+		parts := strings.SplitN(key, ":", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		kind, subject, permission := parts[0], parts[1], parts[2]
+		var err error
+		switch kind {
+		case permSubjectUser:
+			err = sonarClient.RemoveUserProjectPermission(ctx, project.Spec.Key, subject, permission)
+		case permSubjectGroup:
+			err = sonarClient.RemoveGroupProjectPermission(ctx, project.Spec.Key, subject, permission)
+		}
+		if err != nil {
+			return fmt.Errorf("removing %s grant %q: %w", kind, key, err)
+		}
+	}
+
+	for key := range desired {
+		parts := strings.SplitN(key, ":", 3)
+		kind, subject, permission := parts[0], parts[1], parts[2]
+		var err error
+		switch kind {
+		case permSubjectUser:
+			err = sonarClient.AddUserProjectPermission(ctx, project.Spec.Key, subject, permission)
+		case permSubjectGroup:
+			err = sonarClient.AddGroupProjectPermission(ctx, project.Spec.Key, subject, permission)
+		}
+		if err != nil {
+			return fmt.Errorf("adding %s grant %q: %w", kind, key, err)
+		}
+	}
+
+	managed := make([]string, 0, len(desired))
+	for k := range desired {
+		managed = append(managed, k)
+	}
+	sort.Strings(managed)
+	project.Status.ManagedPermissions = managed
 	return nil
 }
 
