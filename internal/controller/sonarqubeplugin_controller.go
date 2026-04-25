@@ -281,20 +281,40 @@ func (r *SonarQubePluginReconciler) signalInstanceRestart(ctx context.Context, p
 }
 
 // handleDeletion désinstalle le plugin avant de retirer le finalizer.
+// Si le plugin n'est pas (ou plus) installé côté SonarQube, on saute l'appel
+// uninstall : sinon une CR qui n'a jamais réussi son install (clé invalide,
+// plugin bundled dans le core, etc.) reste bloquée pour toujours par le
+// finalizer.
 func (r *SonarQubePluginReconciler) handleDeletion(ctx context.Context, plugin *sonarqubev1alpha1.SonarQubePlugin, sonarClient sonarqube.Client, instance *sonarqubev1alpha1.SonarQubeInstance) error {
 	if !controllerutil.ContainsFinalizer(plugin, pluginFinalizer) {
 		return nil
 	}
 
-	if err := sonarClient.UninstallPlugin(ctx, plugin.Spec.Key); err != nil {
-		r.Recorder.Event(plugin, corev1.EventTypeWarning, "UninstallFailed", err.Error())
-		return fmt.Errorf("uninstalling plugin on deletion: %w", err)
+	installed, err := sonarClient.ListInstalledPlugins(ctx)
+	if err != nil {
+		return fmt.Errorf("listing plugins on deletion: %w", err)
 	}
 
-	r.signalInstanceRestart(ctx, plugin, instance)
+	isInstalled := false
+	for i := range installed {
+		if installed[i].Key == plugin.Spec.Key {
+			isInstalled = true
+			break
+		}
+	}
 
-	r.Recorder.Event(plugin, corev1.EventTypeNormal, "Uninstalled",
-		fmt.Sprintf("Plugin %q uninstalled", plugin.Spec.Key))
+	if isInstalled {
+		if err := sonarClient.UninstallPlugin(ctx, plugin.Spec.Key); err != nil {
+			r.Recorder.Event(plugin, corev1.EventTypeWarning, "UninstallFailed", err.Error())
+			return fmt.Errorf("uninstalling plugin on deletion: %w", err)
+		}
+		r.signalInstanceRestart(ctx, plugin, instance)
+		r.Recorder.Event(plugin, corev1.EventTypeNormal, "Uninstalled",
+			fmt.Sprintf("Plugin %q uninstalled", plugin.Spec.Key))
+	} else {
+		r.Recorder.Event(plugin, corev1.EventTypeNormal, "AlreadyUninstalled",
+			fmt.Sprintf("Plugin %q is not installed in SonarQube — releasing finalizer", plugin.Spec.Key))
+	}
 
 	controllerutil.RemoveFinalizer(plugin, pluginFinalizer)
 	return r.Update(ctx, plugin)

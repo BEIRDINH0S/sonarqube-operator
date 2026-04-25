@@ -201,6 +201,61 @@ var _ = Describe("SonarQubePlugin Controller", func() {
 		Expect(updated.Status.Phase).To(Equal("Installed"))
 	})
 
+	It("retire le finalizer sans appeler UninstallPlugin si le plugin n'est pas installé", func() {
+		instanceName := "instance-del-missing"
+		pluginName := "plugin-del-missing"
+		nn := types.NamespacedName{Name: pluginName, Namespace: "default"}
+		defer deletePlugin(pluginName)
+		defer deleteInstance(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		Expect(k8sClient.Create(ctx, newTestPlugin(pluginName, instanceName, "7.30.1"))).To(Succeed())
+
+		// 1er reconcile : pose le finalizer + install
+		mock := &mockSonarClient{}
+		_, err := newPluginReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		// SonarQube ne connaît pas le plugin (clé invalide / bundled core).
+		// La CR est supprimée → finalizer doit lâcher sans appel à uninstall.
+		mock.installedPlugins = nil
+		Expect(k8sClient.Delete(ctx, newTestPlugin(pluginName, instanceName, "7.30.1"))).To(Succeed())
+
+		_, err = newPluginReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(mock.uninstallPluginCalls).To(Equal(0))
+
+		// La CR doit avoir disparu (finalizer retiré → suppression effective).
+		gone := &sonarqubev1alpha1.SonarQubePlugin{}
+		Expect(k8sClient.Get(ctx, nn, gone)).NotTo(Succeed())
+	})
+
+	It("appelle UninstallPlugin quand le plugin est bien installé côté SonarQube", func() {
+		instanceName := "instance-del-present"
+		pluginName := "plugin-del-present"
+		nn := types.NamespacedName{Name: pluginName, Namespace: "default"}
+		defer deletePlugin(pluginName)
+		defer deleteInstance(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		Expect(k8sClient.Create(ctx, newTestPlugin(pluginName, instanceName, "7.30.1"))).To(Succeed())
+
+		// 1er reconcile : pose le finalizer + install
+		mock := &mockSonarClient{}
+		_, err := newPluginReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		// Le plugin est listé comme installé → la suppression doit l'appeler.
+		mock.installedPlugins = []sonarqube.Plugin{{Key: "sonar-java", Version: "7.30.1"}}
+		Expect(k8sClient.Delete(ctx, newTestPlugin(pluginName, instanceName, "7.30.1"))).To(Succeed())
+
+		_, err = newPluginReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(mock.uninstallPluginCalls).To(Equal(1))
+	})
+
 	It("réinstalle si la version est mauvaise", func() {
 		instanceName := "instance-upgrade"
 		pluginName := "plugin-upgrade"
