@@ -128,6 +128,11 @@ type mockSonarClient struct {
 	updateGroupDescriptionCalls int
 	deleteGroupCalls            int
 	lastCreatedGroup            string
+	// global permissions
+	addUserGlobalPermCalls    int
+	removeUserGlobalPermCalls int
+	addedGlobalPerms          []string // "login:permission"
+	removedGlobalPerms        []string
 }
 
 func (m *mockSonarClient) GetStatus(_ context.Context) (string, string, error) {
@@ -333,6 +338,16 @@ func (m *mockSonarClient) UpdateGroupDescription(_ context.Context, _, _ string)
 }
 func (m *mockSonarClient) DeleteGroup(_ context.Context, _ string) error {
 	m.deleteGroupCalls++
+	return nil
+}
+func (m *mockSonarClient) AddUserGlobalPermission(_ context.Context, login, permission string) error {
+	m.addUserGlobalPermCalls++
+	m.addedGlobalPerms = append(m.addedGlobalPerms, login+":"+permission)
+	return nil
+}
+func (m *mockSonarClient) RemoveUserGlobalPermission(_ context.Context, login, permission string) error {
+	m.removeUserGlobalPermCalls++
+	m.removedGlobalPerms = append(m.removedGlobalPerms, login+":"+permission)
 	return nil
 }
 

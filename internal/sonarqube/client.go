@@ -190,6 +190,10 @@ type Client interface {
 	// UpdateUserScmAccounts replaces the user's SCM account list. Pass an empty
 	// slice to clear all linked accounts.
 	UpdateUserScmAccounts(ctx context.Context, login string, scmAccounts []string) error
+	// AddUserGlobalPermission grants an instance-wide permission to a user.
+	AddUserGlobalPermission(ctx context.Context, login, permission string) error
+	// RemoveUserGlobalPermission revokes an instance-wide permission from a user.
+	RemoveUserGlobalPermission(ctx context.Context, login, permission string) error
 }
 
 // --- Implémentation HTTP ---
@@ -941,6 +945,22 @@ func (c *httpClient) RemoveUserFromGroup(ctx context.Context, login, group strin
 	_, err := c.do(ctx, http.MethodPost, "/api/user_groups/remove_user", url.Values{
 		"login": {login},
 		"name":  {group},
+	})
+	return err
+}
+
+func (c *httpClient) AddUserGlobalPermission(ctx context.Context, login, permission string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/permissions/add_user", url.Values{
+		"login":      {login},
+		"permission": {permission},
+	})
+	return err
+}
+
+func (c *httpClient) RemoveUserGlobalPermission(ctx context.Context, login, permission string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/permissions/remove_user", url.Values{
+		"login":      {login},
+		"permission": {permission},
 	})
 	return err
 }

@@ -335,4 +335,38 @@ var _ = Describe("SonarQubeUser Controller", func() {
 		Expect(k8sClient.Get(ctx, nn, final)).To(Succeed())
 		Expect(final.Status.ManagedTokens).To(Equal([]string{"automation"}))
 	})
+
+	It("applique les global permissions et révoque celles retirées", func() {
+		instanceName := "user-instance-globalperms"
+		userName := "user-globalperms"
+		nn := types.NamespacedName{Name: userName, Namespace: "default"}
+		defer deleteUser(userName)
+		defer deleteInstanceIfExists(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		u := newTestUser(userName, instanceName, "eve")
+		u.Spec.GlobalPermissions = []string{"admin", "scan"}
+		Expect(k8sClient.Create(ctx, u)).To(Succeed())
+
+		// Status: previously managed "profileadmin" → must be revoked.
+		updated := &sonarqubev1alpha1.SonarQubeUser{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		updated.Status.ManagedGlobalPermissions = []string{"admin", "profileadmin"}
+		Expect(k8sClient.Status().Update(ctx, updated)).To(Succeed())
+
+		mock := &mockSonarClient{
+			getUserResult: &sonarqube.User{Login: "eve", Name: "John Doe", Email: "john@example.com", Active: true},
+		}
+		_, err := newUserReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(mock.addUserGlobalPermCalls).To(Equal(2))
+		Expect(mock.addedGlobalPerms).To(ContainElements("eve:admin", "eve:scan"))
+		Expect(mock.removeUserGlobalPermCalls).To(Equal(1))
+		Expect(mock.removedGlobalPerms).To(Equal([]string{"eve:profileadmin"}))
+
+		final := &sonarqubev1alpha1.SonarQubeUser{}
+		Expect(k8sClient.Get(ctx, nn, final)).To(Succeed())
+		Expect(final.Status.ManagedGlobalPermissions).To(Equal([]string{"admin", "scan"}))
+	})
 })
