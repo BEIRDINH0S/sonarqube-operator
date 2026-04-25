@@ -50,18 +50,18 @@ type mockSonarClient struct {
 	lastInstalledVersion string
 	uninstallPluginCalls int
 	// project
-	getProjectResult            *sonarqube.Project
-	getProjectErr               error
-	createProjectCalls          int
-	deleteProjectCalls          int
-	assignQualityGateCalls      int
-	generateTokenResult         *sonarqube.Token
-	generateTokenErr            error
-	revokeTokenCalls            int
-	getProjectMainBranchResult  string
-	getProjectMainBranchErr     error
-	renameMainBranchCalls       int
-	lastRenamedMainBranch       string
+	getProjectResult           *sonarqube.Project
+	getProjectErr              error
+	createProjectCalls         int
+	deleteProjectCalls         int
+	assignQualityGateCalls     int
+	generateTokenResult        *sonarqube.Token
+	generateTokenErr           error
+	revokeTokenCalls           int
+	getProjectMainBranchResult string
+	getProjectMainBranchErr    error
+	renameMainBranchCalls      int
+	lastRenamedMainBranch      string
 	// auth
 	validateAuthErr error
 	// quality gate

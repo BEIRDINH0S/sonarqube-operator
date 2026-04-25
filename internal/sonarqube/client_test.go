@@ -309,8 +309,10 @@ func TestDeactivateUser(t *testing.T) {
 }
 
 func TestGetProjectMainBranch(t *testing.T) {
+	var gotProject string
 	client := newTestServer(t, map[string]http.HandlerFunc{
-		"/api/project_branches/list": func(w http.ResponseWriter, _ *http.Request) {
+		"/api/project_branches/list": func(w http.ResponseWriter, r *http.Request) {
+			gotProject = r.URL.Query().Get("project")
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"branches":[{"name":"develop","isMain":true},{"name":"feature/x","isMain":false}]}`))
 		},
@@ -319,6 +321,7 @@ func TestGetProjectMainBranch(t *testing.T) {
 	branch, err := client.GetProjectMainBranch(context.Background(), "my-project")
 	require.NoError(t, err)
 	assert.Equal(t, "develop", branch)
+	assert.Equal(t, "my-project", gotProject)
 }
 
 func TestGetProjectMainBranch_NoMain(t *testing.T) {
