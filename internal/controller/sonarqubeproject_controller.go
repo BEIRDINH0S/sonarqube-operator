@@ -206,13 +206,16 @@ func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, proje
 		}
 	}
 
-	// Tags + links — best-effort (non-fatal): a transient SonarQube error here
-	// shouldn't tip the project into Failed when the rest of the spec reconciled.
+	// Tags / links / settings — best-effort (non-fatal): a transient SonarQube
+	// error here shouldn't tip the project into Failed when the rest reconciled.
 	if err := sonarClient.SetProjectTags(ctx, project.Spec.Key, project.Spec.Tags); err != nil {
 		r.Recorder.Event(project, corev1.EventTypeWarning, "TagsUpdateFailed", err.Error())
 	}
 	if err := r.reconcileProjectLinks(ctx, project, sonarClient); err != nil {
 		r.Recorder.Event(project, corev1.EventTypeWarning, "LinksUpdateFailed", err.Error())
+	}
+	if err := r.reconcileProjectSettings(ctx, project, sonarClient); err != nil {
+		r.Recorder.Event(project, corev1.EventTypeWarning, "SettingsUpdateFailed", err.Error())
 	}
 
 	// Gérer le token CI
@@ -280,6 +283,34 @@ func (r *SonarQubeProjectReconciler) reconcileProjectLinks(ctx context.Context, 
 		managed = append(managed, l.Name)
 	}
 	project.Status.ManagedLinkNames = managed
+	return nil
+}
+
+// reconcileProjectSettings makes the project's sonar.* settings match spec.settings.
+// Sets every desired key (idempotent) and resets keys the operator previously
+// owned but that are no longer in spec.
+func (r *SonarQubeProjectReconciler) reconcileProjectSettings(ctx context.Context, project *sonarqubev1alpha1.SonarQubeProject, sonarClient sonarqube.Client) error {
+	for k, v := range project.Spec.Settings {
+		if err := sonarClient.SetSetting(ctx, project.Spec.Key, k, v); err != nil {
+			return fmt.Errorf("setting %q: %w", k, err)
+		}
+	}
+
+	var toReset []string
+	for _, k := range project.Status.ManagedSettings {
+		if _, stillDesired := project.Spec.Settings[k]; !stillDesired {
+			toReset = append(toReset, k)
+		}
+	}
+	if err := sonarClient.ResetSettings(ctx, project.Spec.Key, toReset); err != nil {
+		return fmt.Errorf("resetting settings: %w", err)
+	}
+
+	managed := make([]string, 0, len(project.Spec.Settings))
+	for k := range project.Spec.Settings {
+		managed = append(managed, k)
+	}
+	project.Status.ManagedSettings = managed
 	return nil
 }
 

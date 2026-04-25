@@ -124,6 +124,59 @@ var _ = Describe("SonarQubeProject Controller", func() {
 		Expect(updated.Status.ProjectURL).To(ContainSubstring("proj-create-key"))
 	})
 
+	It("applique les settings projet et reset les clés retirées", func() {
+		instanceName := "proj-instance-settings"
+		projectName := "proj-settings"
+		nn := types.NamespacedName{Name: projectName, Namespace: "default"}
+		defer deleteProject(projectName)
+		defer deleteInstanceIfExists(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		p := newTestProject(projectName, instanceName, "proj-settings-key")
+		p.Spec.Settings = map[string]string{
+			"sonar.exclusions":          "**/vendor/**",
+			"sonar.coverage.exclusions": "**/*_test.go",
+		}
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+
+		// Pré-existant : "sonar.sourceEncoding" en status mais retiré du spec → reset attendu.
+		updated := &sonarqubev1alpha1.SonarQubeProject{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		updated.Status.ManagedSettings = []string{"sonar.exclusions", "sonar.sourceEncoding"}
+		Expect(k8sClient.Status().Update(ctx, updated)).To(Succeed())
+
+		mock := &mockSonarClient{
+			getProjectResult: &sonarqube.Project{Key: "proj-settings-key", Visibility: "private"},
+		}
+		_, err := newProjectReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(mock.setSettingCalls).To(Equal(2))
+		Expect(mock.setSettings).To(HaveKeyWithValue("sonar.exclusions", "**/vendor/**"))
+		Expect(mock.setSettings).To(HaveKeyWithValue("sonar.coverage.exclusions", "**/*_test.go"))
+		Expect(mock.resetSettingsKeys).To(Equal([]string{"sonar.sourceEncoding"}))
+
+		final := &sonarqubev1alpha1.SonarQubeProject{}
+		Expect(k8sClient.Get(ctx, nn, final)).To(Succeed())
+		Expect(final.Status.ManagedSettings).To(ConsistOf("sonar.exclusions", "sonar.coverage.exclusions"))
+	})
+
+	It("rejette les clés sonar.auth.* à l'admission", func() {
+		p := &sonarqubev1alpha1.SonarQubeProject{
+			ObjectMeta: metav1.ObjectMeta{Name: "proj-bad-setting", Namespace: "default"},
+			Spec: sonarqubev1alpha1.SonarQubeProjectSpec{
+				InstanceRef: sonarqubev1alpha1.InstanceRef{Name: "any"},
+				Key:         "any",
+				Name:        "any",
+				Visibility:  "private",
+				Settings:    map[string]string{"sonar.auth.github.enabled": "true"},
+			},
+		}
+		err := k8sClient.Create(ctx, p)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("sonar.auth.* keys are reserved"))
+	})
+
 	It("ne recrée pas le projet s'il existe déjà dans SonarQube", func() {
 		instanceName := "proj-instance-exists"
 		projectName := "proj-exists"
