@@ -38,6 +38,18 @@ rules:
   - update
   - watch
 - apiGroups:
+  - batch
+  resources:
+  - cronjobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - networking.k8s.io
   resources:
   - ingresses
@@ -52,6 +64,7 @@ rules:
 - apiGroups:
   - sonarqube.sonarqube.io
   resources:
+  - sonarqubebackups
   - sonarqubeinstances
   - sonarqubeplugins
   - sonarqubeprojects
@@ -68,6 +81,7 @@ rules:
 - apiGroups:
   - sonarqube.sonarqube.io
   resources:
+  - sonarqubebackups/finalizers
   - sonarqubeinstances/finalizers
   - sonarqubeplugins/finalizers
   - sonarqubeprojects/finalizers
@@ -78,6 +92,7 @@ rules:
 - apiGroups:
   - sonarqube.sonarqube.io
   resources:
+  - sonarqubebackups/status
   - sonarqubeinstances/status
   - sonarqubeplugins/status
   - sonarqubeprojects/status
