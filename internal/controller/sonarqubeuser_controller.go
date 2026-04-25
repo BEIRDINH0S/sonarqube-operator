@@ -188,6 +188,10 @@ func (r *SonarQubeUserReconciler) reconcileUser(ctx context.Context, user *sonar
 		r.Recorder.Event(user, corev1.EventTypeWarning, "TokensUpdateFailed", err.Error())
 	}
 
+	if err := r.reconcileUserGlobalPermissions(ctx, user, sonarClient); err != nil {
+		r.Recorder.Event(user, corev1.EventTypeWarning, "GlobalPermissionsUpdateFailed", err.Error())
+	}
+
 	user.Status.Phase = phaseReady
 	user.Status.Active = existing.Active
 	apimeta.SetStatusCondition(&user.Status.Conditions, metav1.Condition{
@@ -400,6 +404,34 @@ func (r *SonarQubeUserReconciler) reconcileUserTokens(ctx context.Context, user 
 		managed = append(managed, t.Name)
 	}
 	user.Status.ManagedTokens = managed
+	return nil
+}
+
+// reconcileUserGlobalPermissions diffs spec.globalPermissions against
+// status.managedGlobalPermissions and adds/removes only the grants the
+// operator owns.
+func (r *SonarQubeUserReconciler) reconcileUserGlobalPermissions(ctx context.Context, user *sonarqubev1alpha1.SonarQubeUser, sonarClient sonarqube.Client) error {
+	desired := make(map[string]bool, len(user.Spec.GlobalPermissions))
+	for _, p := range user.Spec.GlobalPermissions {
+		desired[p] = true
+	}
+
+	for _, p := range user.Status.ManagedGlobalPermissions {
+		if desired[p] {
+			continue
+		}
+		if err := sonarClient.RemoveUserGlobalPermission(ctx, user.Spec.Login, p); err != nil {
+			return fmt.Errorf("removing global permission %q: %w", p, err)
+		}
+	}
+
+	for _, p := range user.Spec.GlobalPermissions {
+		if err := sonarClient.AddUserGlobalPermission(ctx, user.Spec.Login, p); err != nil {
+			return fmt.Errorf("granting global permission %q: %w", p, err)
+		}
+	}
+
+	user.Status.ManagedGlobalPermissions = append([]string(nil), user.Spec.GlobalPermissions...)
 	return nil
 }
 

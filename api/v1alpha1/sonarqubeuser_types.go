@@ -68,6 +68,14 @@ type SonarQubeUserSpec struct {
 	// and the operator regenerates on the next reconcile.
 	// +optional
 	Tokens []UserToken `json:"tokens,omitempty"`
+
+	// globalPermissions grants instance-wide permissions to this user
+	// (admin, gateadmin, profileadmin, provisioning, scan).
+	// Operator-owned grants are tracked in status.managedGlobalPermissions:
+	// permissions assigned via the SonarQube UI are never removed.
+	// +optional
+	// +listType=set
+	GlobalPermissions []string `json:"globalPermissions,omitempty"`
 }
 
 // UserToken declares a SonarQube user token stored in a Kubernetes Secret.
@@ -112,6 +120,12 @@ type SonarQubeUserStatus struct {
 	// revoked on the next reconcile.
 	// +optional
 	ManagedTokens []string `json:"managedTokens,omitempty"`
+
+	// managedGlobalPermissions tracks the global permissions the operator
+	// granted on this user. Entries no longer in spec.globalPermissions are
+	// revoked on the next reconcile.
+	// +optional
+	ManagedGlobalPermissions []string `json:"managedGlobalPermissions,omitempty"`
 
 	// +listType=map
 	// +listMapKey=type
