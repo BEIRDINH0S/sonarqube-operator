@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -49,6 +50,11 @@ type mockSonarClient struct {
 	lastInstalledKey     string
 	lastInstalledVersion string
 	uninstallPluginCalls int
+	// install retry on risk-consent: nth attempt (1-indexed) returns the consent error,
+	// subsequent attempts return nil. 0 disables the simulation.
+	installPluginConsentErrUntilAttempt int
+	acknowledgeRiskConsentCalls         int
+	acknowledgeRiskConsentErr           error
 	// project
 	getProjectResult           *sonarqube.Project
 	getProjectErr              error
@@ -105,11 +111,18 @@ func (m *mockSonarClient) InstallPlugin(_ context.Context, key, version string) 
 	m.installPluginCalls++
 	m.lastInstalledKey = key
 	m.lastInstalledVersion = version
+	if m.installPluginCalls <= m.installPluginConsentErrUntilAttempt {
+		return errors.New("Can't install plugin without accepting firstly plugins risk consent")
+	}
 	return nil
 }
 func (m *mockSonarClient) UninstallPlugin(_ context.Context, _ string) error {
 	m.uninstallPluginCalls++
 	return nil
+}
+func (m *mockSonarClient) AcknowledgeRiskConsent(_ context.Context) error {
+	m.acknowledgeRiskConsentCalls++
+	return m.acknowledgeRiskConsentErr
 }
 func (m *mockSonarClient) CreateProject(_ context.Context, _, _, _ string) error {
 	m.createProjectCalls++

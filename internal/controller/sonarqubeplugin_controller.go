@@ -222,7 +222,20 @@ func (r *SonarQubePluginReconciler) installPlugin(ctx context.Context, plugin *s
 	})
 	_ = r.Status().Update(ctx, plugin)
 
-	if err := sonarClient.InstallPlugin(ctx, plugin.Spec.Key, plugin.Spec.Version); err != nil {
+	err := sonarClient.InstallPlugin(ctx, plugin.Spec.Key, plugin.Spec.Version)
+	if err != nil && sonarqube.IsRiskConsentRequired(err) {
+		// SonarQube 10.x refuses plugin installs until the marketplace risk consent
+		// is acknowledged. Declaring a SonarQubePlugin CR is itself the explicit
+		// opt-in, so acknowledge transparently and retry once.
+		if ackErr := sonarClient.AcknowledgeRiskConsent(ctx); ackErr != nil {
+			err = fmt.Errorf("acknowledging plugin risk consent: %w", ackErr)
+		} else {
+			r.Recorder.Event(plugin, corev1.EventTypeNormal, "RiskConsentAccepted",
+				"Acknowledged SonarQube marketplace plugins risk consent")
+			err = sonarClient.InstallPlugin(ctx, plugin.Spec.Key, plugin.Spec.Version)
+		}
+	}
+	if err != nil {
 		plugin.Status.Phase = phaseFailed
 		apimeta.SetStatusCondition(&plugin.Status.Conditions, metav1.Condition{
 			Type:               conditionInstalled,
