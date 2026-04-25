@@ -50,6 +50,14 @@ func getInstanceAdminToken(ctx context.Context, k8sClient client.Client, instanc
 	return token, nil
 }
 
+// Condition types partagés par tous les contrôleurs.
+// Le type est scoped à la ressource — "Ready" sur un Plugin signifie "installé", pas "UP".
+const (
+	conditionReady            = "Ready"
+	conditionAdminInitialized = "AdminInitialized"
+	conditionInstalled        = "Installed"
+)
+
 // podSpecHash calcule un hash SHA-256 de la PodSpec pour détecter les drifts sans reflect.DeepEqual.
 // On sérialise en JSON puis on hash — les champs à zéro sont omis de façon cohérente.
 func podSpecHash(spec corev1.PodSpec) string {

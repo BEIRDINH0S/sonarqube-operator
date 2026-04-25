@@ -25,6 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -100,7 +101,6 @@ func (r *SonarQubeInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, err
 	}
 
-	instance.Status.Version = instance.Spec.Version
 	instance.Status.URL = serviceURL
 	if err := r.Status().Update(ctx, instance); err != nil {
 		return ctrl.Result{}, fmt.Errorf("updating status: %w", err)
@@ -116,28 +116,61 @@ func (r *SonarQubeInstanceReconciler) reconcileHealth(ctx context.Context, insta
 
 	// GetStatus est un endpoint public — pas besoin de token
 	unauthClient := r.NewSonarClient(serviceURL, "")
-	status, err := unauthClient.GetStatus(ctx)
+	status, version, err := unauthClient.GetStatus(ctx)
 	if err != nil {
 		log.Info("SonarQube not reachable yet, requeueing", "error", err.Error())
 		r.Recorder.Event(instance, corev1.EventTypeNormal, "Waiting", "Waiting for SonarQube to be reachable")
 		instance.Status.Phase = "Progressing"
+		apimeta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+			Type:               conditionReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "Unreachable",
+			Message:            fmt.Sprintf("SonarQube is not reachable: %s", err),
+			ObservedGeneration: instance.Generation,
+		})
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
+	}
+
+	// La version est disponible dès que SonarQube répond, même en STARTING
+	if version != "" {
+		instance.Status.Version = version
 	}
 
 	if status != "UP" {
 		log.Info("SonarQube not ready yet", "status", status)
 		r.Recorder.Event(instance, corev1.EventTypeNormal, "Waiting", fmt.Sprintf("SonarQube status: %s", status))
 		instance.Status.Phase = "Progressing"
+		apimeta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+			Type:               conditionReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "Starting",
+			Message:            fmt.Sprintf("SonarQube is starting (status: %s)", status),
+			ObservedGeneration: instance.Generation,
+		})
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
 
 	if err := r.initializeAdmin(ctx, instance, serviceURL); err != nil {
 		log.Error(err, "Failed to initialize admin, will retry")
 		instance.Status.Phase = "Progressing"
+		apimeta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+			Type:               conditionReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "AdminInitFailed",
+			Message:            err.Error(),
+			ObservedGeneration: instance.Generation,
+		})
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
 
 	instance.Status.Phase = "Ready"
+	apimeta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+		Type:               conditionReady,
+		Status:             metav1.ConditionTrue,
+		Reason:             "Ready",
+		Message:            "SonarQube instance is ready",
+		ObservedGeneration: instance.Generation,
+	})
 	r.Recorder.Event(instance, corev1.EventTypeNormal, "Ready", "SonarQube instance is ready")
 	return ctrl.Result{}, nil
 }
@@ -157,6 +190,13 @@ func (r *SonarQubeInstanceReconciler) initializeAdmin(ctx context.Context, insta
 	existing := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Name: tokenSecretName, Namespace: instance.Namespace}, existing); err == nil {
 		instance.Status.AdminTokenSecretRef = tokenSecretName
+		apimeta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+			Type:               conditionAdminInitialized,
+			Status:             metav1.ConditionTrue,
+			Reason:             "TokenExists",
+			Message:            fmt.Sprintf("Admin token stored in Secret %q", tokenSecretName),
+			ObservedGeneration: instance.Generation,
+		})
 		return nil
 	}
 
@@ -210,6 +250,13 @@ func (r *SonarQubeInstanceReconciler) initializeAdmin(ctx context.Context, insta
 	}
 
 	instance.Status.AdminTokenSecretRef = tokenSecretName
+	apimeta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+		Type:               conditionAdminInitialized,
+		Status:             metav1.ConditionTrue,
+		Reason:             "TokenCreated",
+		Message:            fmt.Sprintf("Admin token stored in Secret %q", tokenSecretName),
+		ObservedGeneration: instance.Generation,
+	})
 	r.Recorder.Event(instance, corev1.EventTypeNormal, "AdminInitialized",
 		fmt.Sprintf("Admin token stored in Secret %q", tokenSecretName))
 	return nil

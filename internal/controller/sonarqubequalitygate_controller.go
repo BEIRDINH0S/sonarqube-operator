@@ -22,6 +22,8 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -80,6 +82,13 @@ func (r *SonarQubeQualityGateReconciler) Reconcile(ctx context.Context, req ctrl
 	if instance.Status.Phase != "Ready" {
 		log.Info("Instance not ready, requeueing", "instance", instance.Name)
 		gate.Status.Phase = "Pending"
+		apimeta.SetStatusCondition(&gate.Status.Conditions, metav1.Condition{
+			Type:               conditionReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "InstanceNotReady",
+			Message:            fmt.Sprintf("SonarQubeInstance %q is not ready", instance.Name),
+			ObservedGeneration: gate.Generation,
+		})
 		_ = r.Status().Update(ctx, gate)
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
@@ -129,6 +138,13 @@ func (r *SonarQubeQualityGateReconciler) reconcileQualityGate(ctx context.Contex
 		created, err := sonarClient.CreateQualityGate(ctx, gate.Spec.Name)
 		if err != nil {
 			gate.Status.Phase = "Failed"
+			apimeta.SetStatusCondition(&gate.Status.Conditions, metav1.Condition{
+				Type:               conditionReady,
+				Status:             metav1.ConditionFalse,
+				Reason:             "CreateFailed",
+				Message:            err.Error(),
+				ObservedGeneration: gate.Generation,
+			})
 			_ = r.Status().Update(ctx, gate)
 			r.Recorder.Event(gate, corev1.EventTypeWarning, "CreateFailed", err.Error())
 			return ctrl.Result{}, fmt.Errorf("creating quality gate: %w", err)
@@ -143,8 +159,15 @@ func (r *SonarQubeQualityGateReconciler) reconcileQualityGate(ctx context.Contex
 	}
 
 	// Réconcilier les conditions (aussi bien pour un gate nouvellement créé que pour un existant)
-	if err := r.reconcileConditions(ctx, sonarClient, gateID, currentConditions, gate.Spec.Conditions); err != nil {
+	if err := r.reconcileConditions(ctx, sonarClient, gate.Spec.Name, currentConditions, gate.Spec.Conditions); err != nil {
 		gate.Status.Phase = "Failed"
+		apimeta.SetStatusCondition(&gate.Status.Conditions, metav1.Condition{
+			Type:               conditionReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "ConditionSyncFailed",
+			Message:            err.Error(),
+			ObservedGeneration: gate.Generation,
+		})
 		_ = r.Status().Update(ctx, gate)
 		r.Recorder.Event(gate, corev1.EventTypeWarning, "ConditionSyncFailed", err.Error())
 		return ctrl.Result{}, err
@@ -159,6 +182,13 @@ func (r *SonarQubeQualityGateReconciler) reconcileQualityGate(ctx context.Contex
 
 	gate.Status.Phase = "Ready"
 	gate.Status.GateID = gateID
+	apimeta.SetStatusCondition(&gate.Status.Conditions, metav1.Condition{
+		Type:               conditionReady,
+		Status:             metav1.ConditionTrue,
+		Reason:             "Ready",
+		Message:            fmt.Sprintf("Quality gate %q is ready (id=%d)", gate.Spec.Name, gateID),
+		ObservedGeneration: gate.Generation,
+	})
 	return ctrl.Result{}, r.Status().Update(ctx, gate)
 }
 
@@ -168,7 +198,7 @@ func (r *SonarQubeQualityGateReconciler) reconcileQualityGate(ctx context.Contex
 func (r *SonarQubeQualityGateReconciler) reconcileConditions(
 	ctx context.Context,
 	sonarClient sonarqube.Client,
-	gateID int64,
+	gateName string,
 	current []sonarqube.Condition,
 	desired []sonarqubev1alpha1.QualityGateConditionSpec,
 ) error {
@@ -196,7 +226,7 @@ func (r *SonarQubeQualityGateReconciler) reconcileConditions(
 	// Ajouter les conditions désirées qui n'existent pas encore
 	for _, d := range desired {
 		if !currentSet[conditionKey(d.Metric, d.Operator, d.Value)] {
-			if _, err := sonarClient.AddCondition(ctx, gateID, d.Metric, d.Operator, d.Value); err != nil {
+			if _, err := sonarClient.AddCondition(ctx, gateName, d.Metric, d.Operator, d.Value); err != nil {
 				return fmt.Errorf("adding condition (metric=%s): %w", d.Metric, err)
 			}
 		}
@@ -216,12 +246,16 @@ func (r *SonarQubeQualityGateReconciler) handleDeletion(ctx context.Context, gat
 	}
 
 	if err := sonarClient.DeleteQualityGate(ctx, gate.Spec.Name); err != nil {
-		r.Recorder.Event(gate, corev1.EventTypeWarning, "DeleteFailed", err.Error())
-		return ctrl.Result{}, fmt.Errorf("deleting quality gate: %w", err)
+		if !errors.Is(err, sonarqube.ErrNotFound) {
+			// Log a warning but do not block cleanup — the gate may already be gone
+			// or the SonarQube API endpoint may have changed (e.g. removed in 10.x).
+			r.Recorder.Event(gate, corev1.EventTypeWarning, "DeleteWarning",
+				fmt.Sprintf("Could not delete quality gate %q from SonarQube (continuing cleanup): %s", gate.Spec.Name, err.Error()))
+		}
+	} else {
+		r.Recorder.Event(gate, corev1.EventTypeNormal, "Deleted",
+			fmt.Sprintf("Quality gate %q deleted from SonarQube", gate.Spec.Name))
 	}
-
-	r.Recorder.Event(gate, corev1.EventTypeNormal, "Deleted",
-		fmt.Sprintf("Quality gate %q deleted from SonarQube", gate.Spec.Name))
 	controllerutil.RemoveFinalizer(gate, qualityGateFinalizer)
 	return ctrl.Result{}, r.Update(ctx, gate)
 }

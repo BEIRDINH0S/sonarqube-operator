@@ -1,9 +1,10 @@
 apiVersion: sonarqube.sonarqube.io/v1alpha1
 kind: SonarQubePlugin
 metadata:
-  labels:
-    app.kubernetes.io/name: sonarqube-operator
-    app.kubernetes.io/managed-by: kustomize
-  name: sonarqubeplugin-sample
+  name: my-plugin
+  namespace: default
 spec:
-  # TODO(user): Add fields here
+  instanceRef:
+    name: my-sonarqube
+  key: scmgit
+  version: "1.13.0.2445"

@@ -23,6 +23,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -82,6 +83,13 @@ func (r *SonarQubeProjectReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if instance.Status.Phase != "Ready" {
 		log.Info("Instance not ready, requeueing", "instance", instance.Name)
 		project.Status.Phase = "Pending"
+		apimeta.SetStatusCondition(&project.Status.Conditions, metav1.Condition{
+			Type:               conditionReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "InstanceNotReady",
+			Message:            fmt.Sprintf("SonarQubeInstance %q is not ready", instance.Name),
+			ObservedGeneration: project.Generation,
+		})
 		_ = r.Status().Update(ctx, project)
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
@@ -127,6 +135,13 @@ func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, proje
 		// Projet absent → créer
 		if err := sonarClient.CreateProject(ctx, project.Spec.Key, project.Spec.Name, project.Spec.Visibility); err != nil {
 			project.Status.Phase = "Failed"
+			apimeta.SetStatusCondition(&project.Status.Conditions, metav1.Condition{
+				Type:               conditionReady,
+				Status:             metav1.ConditionFalse,
+				Reason:             "CreateFailed",
+				Message:            err.Error(),
+				ObservedGeneration: project.Generation,
+			})
 			_ = r.Status().Update(ctx, project)
 			r.Recorder.Event(project, corev1.EventTypeWarning, "CreateFailed", err.Error())
 			return ctrl.Result{}, fmt.Errorf("creating project: %w", err)
@@ -154,6 +169,13 @@ func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, proje
 
 	project.Status.Phase = "Ready"
 	project.Status.ProjectURL = fmt.Sprintf("%s/dashboard?id=%s", instance.Status.URL, project.Spec.Key)
+	apimeta.SetStatusCondition(&project.Status.Conditions, metav1.Condition{
+		Type:               conditionReady,
+		Status:             metav1.ConditionTrue,
+		Reason:             "Ready",
+		Message:            fmt.Sprintf("Project %q is ready in SonarQube", project.Spec.Key),
+		ObservedGeneration: project.Generation,
+	})
 	return ctrl.Result{}, r.Status().Update(ctx, project)
 }
 

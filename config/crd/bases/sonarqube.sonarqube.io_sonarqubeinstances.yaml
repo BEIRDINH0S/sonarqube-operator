@@ -102,6 +102,10 @@ spec:
                   host:
                     description: host is the hostname for the Ingress rule (e.g. "sonarqube.example.com").
                     type: string
+                  ingressClassName:
+                    description: ingressClassName is the name of the IngressClass
+                      to use.
+                    type: string
                 type: object
               jvmOptions:
                 description: jvmOptions are extra JVM flags passed to SonarQube (e.g.
@@ -111,12 +115,19 @@ spec:
                 description: persistence configures the PersistentVolumeClaim for
                   SonarQube data.
                 properties:
+                  extensionsSize:
+                    default: 1Gi
+                    description: extensionsSize is the requested storage size for
+                      the plugins/extensions directory (e.g. "1Gi").
+                    type: string
                   size:
                     default: 10Gi
-                    description: size is the requested storage size (e.g. "10Gi").
+                    description: size is the requested storage size for the data directory
+                      (e.g. "10Gi").
                     type: string
                   storageClass:
-                    description: storageClass is the name of the StorageClass to use.
+                    description: storageClass is the name of the StorageClass to use
+                      for both PVCs.
                     type: string
                 type: object
               resources:

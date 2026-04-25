@@ -40,6 +40,7 @@ import (
 // Seules GetStatus et ChangeAdminPassword ont une logique — les autres retournent nil.
 type mockSonarClient struct {
 	status               string
+	statusVersion        string
 	statusErr            error
 	changePasswordErr    error
 	changePasswordCalls  int
@@ -69,8 +70,8 @@ type mockSonarClient struct {
 	setAsDefaultCalls       int
 }
 
-func (m *mockSonarClient) GetStatus(_ context.Context) (string, error) {
-	return m.status, m.statusErr
+func (m *mockSonarClient) GetStatus(_ context.Context) (string, string, error) {
+	return m.status, m.statusVersion, m.statusErr
 }
 func (m *mockSonarClient) ChangeAdminPassword(_ context.Context, _, _ string) error {
 	m.changePasswordCalls++
@@ -122,11 +123,11 @@ func (m *mockSonarClient) DeleteQualityGate(_ context.Context, _ string) error {
 	m.deleteQualityGateCalls++
 	return nil
 }
-func (m *mockSonarClient) AddCondition(_ context.Context, _ int64, _, _, _ string) (*sonarqube.Condition, error) {
+func (m *mockSonarClient) AddCondition(_ context.Context, _ string, _, _, _ string) (*sonarqube.Condition, error) {
 	m.addConditionCalls++
 	return &sonarqube.Condition{}, nil
 }
-func (m *mockSonarClient) RemoveCondition(_ context.Context, _ int64) error {
+func (m *mockSonarClient) RemoveCondition(_ context.Context, _ string) error {
 	m.removeConditionCalls++
 	return nil
 }
@@ -364,7 +365,7 @@ var _ = Describe("SonarQubeInstance Controller (envtest)", func() {
 			_ = k8sClient.Delete(ctx, tokenSecret)
 		}()
 
-		mock := &mockSonarClient{status: "UP"}
+		mock := &mockSonarClient{status: "UP", statusVersion: "10.3"}
 		_, err := newTestReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
 		Expect(err).NotTo(HaveOccurred())
 

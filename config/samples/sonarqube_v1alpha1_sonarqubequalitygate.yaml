@@ -1,9 +1,20 @@
 apiVersion: sonarqube.sonarqube.io/v1alpha1
 kind: SonarQubeQualityGate
 metadata:
-  labels:
-    app.kubernetes.io/name: sonarqube-operator
-    app.kubernetes.io/managed-by: kustomize
-  name: sonarqubequalitygate-sample
+  name: my-quality-gate
+  namespace: default
 spec:
-  # TODO(user): Add fields here
+  instanceRef:
+    name: my-sonarqube
+  name: my-quality-gate
+  isDefault: false
+  conditions:
+    - metric: coverage
+      operator: LT
+      value: "80"
+    - metric: new_reliability_rating
+      operator: GT
+      value: "1"
+    - metric: new_security_rating
+      operator: GT
+      value: "1"

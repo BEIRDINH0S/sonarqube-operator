@@ -21,3 +21,10 @@ spec:
       cpu: "2"
   persistence:
     size: "10Gi"
+    extensionsSize: "2Gi"
+    storageClass: "standard"
+  jvmOptions: "-Xmx2g -Xms512m"
+  ingress:
+    enabled: true
+    host: sonarqube.example.com
+    ingressClassName: nginx

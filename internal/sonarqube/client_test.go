@@ -49,9 +49,10 @@ func TestGetStatus(t *testing.T) {
 		},
 	})
 
-	status, err := client.GetStatus(context.Background())
+	status, version, err := client.GetStatus(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, "UP", status)
+	assert.Equal(t, "10.3", version)
 }
 
 func TestGetStatus_SonarQubeError(t *testing.T) {
@@ -62,7 +63,7 @@ func TestGetStatus_SonarQubeError(t *testing.T) {
 		},
 	})
 
-	_, err := client.GetStatus(context.Background())
+	_, _, err := client.GetStatus(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Service unavailable")
 }
@@ -182,13 +183,13 @@ func TestAddCondition(t *testing.T) {
 	_, client := newTestServer(t, map[string]http.HandlerFunc{
 		"/api/qualitygates/create_condition": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"id":10,"metric":"coverage","op":"LT","error":"80"}`))
+			_, _ = w.Write([]byte(`{"id":"10","metric":"coverage","op":"LT","error":"80"}`))
 		},
 	})
 
-	cond, err := client.AddCondition(context.Background(), 42, "coverage", "LT", "80")
+	cond, err := client.AddCondition(context.Background(), "my-gate", "coverage", "LT", "80")
 	require.NoError(t, err)
-	assert.Equal(t, int64(10), cond.ID)
+	assert.Equal(t, "10", cond.ID)
 	assert.Equal(t, "coverage", cond.Metric)
 }
 
@@ -197,7 +198,7 @@ func TestGetQualityGate(t *testing.T) {
 		"/api/qualitygates/show": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":7,"name":"strict-gate","conditions":[
-				{"id":101,"metric":"coverage","op":"LT","error":"80"}
+				{"id":"101","metric":"coverage","op":"LT","error":"80"}
 			]}`))
 		},
 	})

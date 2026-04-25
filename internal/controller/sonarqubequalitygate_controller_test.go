@@ -216,8 +216,8 @@ var _ = Describe("SonarQubeQualityGate Controller", func() {
 				ID:   10,
 				Name: "Gate Remove",
 				Conditions: []sonarqube.Condition{
-					{ID: 101, Metric: "coverage", Op: "LT", Error: "80"},
-					{ID: 102, Metric: "duplicated_lines_density", Op: "GT", Error: "3"},
+					{ID: "101", Metric: "coverage", Op: "LT", Error: "80"},
+					{ID: "102", Metric: "duplicated_lines_density", Op: "GT", Error: "3"},
 				},
 			},
 		}

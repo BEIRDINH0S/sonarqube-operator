@@ -21,6 +21,8 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -82,6 +84,13 @@ func (r *SonarQubePluginReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if instance.Status.Phase != "Ready" {
 		log.Info("Instance not ready yet, requeueing", "instance", instance.Name, "phase", instance.Status.Phase)
 		plugin.Status.Phase = "Pending"
+		apimeta.SetStatusCondition(&plugin.Status.Conditions, metav1.Condition{
+			Type:               conditionInstalled,
+			Status:             metav1.ConditionFalse,
+			Reason:             "InstanceNotReady",
+			Message:            fmt.Sprintf("SonarQubeInstance %q is not ready (phase: %s)", instance.Name, instance.Status.Phase),
+			ObservedGeneration: plugin.Generation,
+		})
 		_ = r.Status().Update(ctx, plugin)
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
@@ -154,6 +163,13 @@ func (r *SonarQubePluginReconciler) reconcilePlugin(ctx context.Context, plugin 
 		plugin.Status.Phase = "Installed"
 		plugin.Status.InstalledVersion = current.Version
 		plugin.Status.RestartRequired = false
+		apimeta.SetStatusCondition(&plugin.Status.Conditions, metav1.Condition{
+			Type:               conditionInstalled,
+			Status:             metav1.ConditionTrue,
+			Reason:             "Installed",
+			Message:            fmt.Sprintf("Plugin %q is installed (version %s)", plugin.Spec.Key, current.Version),
+			ObservedGeneration: plugin.Generation,
+		})
 		if err := r.Status().Update(ctx, plugin); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -163,10 +179,24 @@ func (r *SonarQubePluginReconciler) reconcilePlugin(ctx context.Context, plugin 
 
 func (r *SonarQubePluginReconciler) installPlugin(ctx context.Context, plugin *sonarqubev1alpha1.SonarQubePlugin, sonarClient sonarqube.Client) (ctrl.Result, error) {
 	plugin.Status.Phase = "Installing"
+	apimeta.SetStatusCondition(&plugin.Status.Conditions, metav1.Condition{
+		Type:               conditionInstalled,
+		Status:             metav1.ConditionFalse,
+		Reason:             "Installing",
+		Message:            fmt.Sprintf("Installing plugin %q", plugin.Spec.Key),
+		ObservedGeneration: plugin.Generation,
+	})
 	_ = r.Status().Update(ctx, plugin)
 
 	if err := sonarClient.InstallPlugin(ctx, plugin.Spec.Key, plugin.Spec.Version); err != nil {
 		plugin.Status.Phase = "Failed"
+		apimeta.SetStatusCondition(&plugin.Status.Conditions, metav1.Condition{
+			Type:               conditionInstalled,
+			Status:             metav1.ConditionFalse,
+			Reason:             "InstallFailed",
+			Message:            err.Error(),
+			ObservedGeneration: plugin.Generation,
+		})
 		_ = r.Status().Update(ctx, plugin)
 		r.Recorder.Event(plugin, corev1.EventTypeWarning, "InstallFailed", err.Error())
 		return ctrl.Result{}, fmt.Errorf("installing plugin: %w", err)
@@ -184,6 +214,13 @@ func (r *SonarQubePluginReconciler) installPlugin(ctx context.Context, plugin *s
 	plugin.Status.Phase = "Installed"
 	plugin.Status.InstalledVersion = plugin.Spec.Version
 	plugin.Status.RestartRequired = false
+	apimeta.SetStatusCondition(&plugin.Status.Conditions, metav1.Condition{
+		Type:               conditionInstalled,
+		Status:             metav1.ConditionTrue,
+		Reason:             "Installed",
+		Message:            fmt.Sprintf("Plugin %q installed and SonarQube restarted", plugin.Spec.Key),
+		ObservedGeneration: plugin.Generation,
+	})
 	return ctrl.Result{}, r.Status().Update(ctx, plugin)
 }
 

@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -33,7 +34,7 @@ import (
 	"github.com/BEIRDINH0S/sonarqube-operator/test/utils"
 )
 
-// namespace where the project is deployed in
+// namespace where the operator is deployed
 const namespace = "sonarqube-operator-system"
 
 // serviceAccountName created for the project
@@ -78,7 +79,11 @@ var _ = Describe("Manager", Ordered, func() {
 	// and deleting the namespace.
 	AfterAll(func() {
 		By("cleaning up the curl pod for metrics")
-		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
+		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace, "--ignore-not-found")
+		_, _ = utils.Run(cmd)
+
+		By("cleaning up the metrics ClusterRoleBinding")
+		cmd = exec.Command("kubectl", "delete", "clusterrolebinding", metricsRoleBindingName, "--ignore-not-found")
 		_, _ = utils.Run(cmd)
 
 		By("undeploying the controller-manager")
@@ -269,18 +274,306 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
+	})
 
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput, err := getMetricsOutput()
-		// Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+	Context("SonarQube resources", Ordered, func() {
+		const (
+			testNS        = "default"
+			instanceName  = "e2e-sonarqube"
+			adminPassword = "Admin@12345!"
+		)
+
+		BeforeAll(func() {
+			By("deploying Postgres")
+			Expect(kubectlApply(`
+apiVersion: v1
+kind: Pod
+metadata:
+  name: postgres
+  namespace: default
+  labels:
+    app: postgres
+spec:
+  containers:
+  - name: postgres
+    image: postgres:15
+    env:
+    - name: POSTGRES_DB
+      value: sonarqube
+    - name: POSTGRES_USER
+      value: sonar
+    - name: POSTGRES_PASSWORD
+      value: sonar
+    ports:
+    - containerPort: 5432
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: default
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+`)).To(Succeed())
+
+			By("waiting for Postgres to be Running")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pod", "postgres", "-n", testNS,
+					"-o", "jsonpath={.status.phase}")
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("Running"))
+			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("creating sonar-db-secret")
+			Expect(kubectlCreateSecret(testNS, "sonar-db-secret",
+				"username=sonar",
+				"password=sonar",
+			)).To(Succeed())
+
+			By("creating sonar-admin secret")
+			Expect(kubectlCreateSecret(testNS, "sonar-admin",
+				"password="+adminPassword,
+			)).To(Succeed())
+
+			By("creating SonarQubeInstance")
+			Expect(kubectlApply(fmt.Sprintf(`
+apiVersion: sonarqube.sonarqube.io/v1alpha1
+kind: SonarQubeInstance
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  edition: community
+  version: "10.3"
+  database:
+    host: postgres
+    port: 5432
+    name: sonarqube
+    secretRef: sonar-db-secret
+  adminSecretRef: sonar-admin
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "500m"
+    limits:
+      memory: "3Gi"
+      cpu: "2"
+  persistence:
+    size: "2Gi"
+    extensionsSize: "512Mi"
+  jvmOptions: "-Xmx512m -Xms128m"
+`, instanceName, testNS))).To(Succeed())
+		})
+
+		AfterAll(func() {
+			By("deleting SonarQubeProject")
+			cmd := exec.Command("kubectl", "delete", "sonarqubeproject", "e2e-project",
+				"-n", testNS, "--ignore-not-found", "--timeout=60s")
+			_, _ = utils.Run(cmd)
+
+			By("deleting SonarQubeQualityGate")
+			cmd = exec.Command("kubectl", "delete", "sonarqubequalitygate", "e2e-gate",
+				"-n", testNS, "--ignore-not-found", "--timeout=60s")
+			_, _ = utils.Run(cmd)
+
+			By("deleting SonarQubeInstance")
+			cmd = exec.Command("kubectl", "delete", "sonarqubeinstance", instanceName,
+				"-n", testNS, "--ignore-not-found", "--timeout=60s")
+			_, _ = utils.Run(cmd)
+
+			By("deleting secrets")
+			cmd = exec.Command("kubectl", "delete", "secret",
+				"sonar-admin", "sonar-db-secret",
+				"-n", testNS, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+
+			By("deleting Postgres")
+			cmd = exec.Command("kubectl", "delete", "pod", "postgres",
+				"-n", testNS, "--ignore-not-found", "--timeout=30s")
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "delete", "service", "postgres",
+				"-n", testNS, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+		})
+
+		It("SonarQubeInstance reaches Ready", func() {
+			// SonarQube takes several minutes to start: ES bootstrap + DB migrations
+			By("waiting for SonarQubeInstance to be Ready (up to 12 min)")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "sonarqubeinstance", instanceName,
+					"-n", testNS, "-o", "jsonpath={.status.phase}")
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("Ready"))
+			}, 12*time.Minute, 15*time.Second).Should(Succeed())
+
+			By("checking status.url is set")
+			cmd := exec.Command("kubectl", "get", "sonarqubeinstance", instanceName,
+				"-n", testNS, "-o", "jsonpath={.status.url}")
+			url, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(url).NotTo(BeEmpty(), "status.url should be set")
+
+			By("checking status.version is set")
+			cmd = exec.Command("kubectl", "get", "sonarqubeinstance", instanceName,
+				"-n", testNS, "-o", "jsonpath={.status.version}")
+			version, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(version).NotTo(BeEmpty(), "status.version should be set")
+
+			By("checking Ready condition is True")
+			cmd = exec.Command("kubectl", "get", "sonarqubeinstance", instanceName,
+				"-n", testNS,
+				"-o", `jsonpath={.status.conditions[?(@.type=="Ready")].status}`)
+			condStatus, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(condStatus).To(Equal("True"))
+
+			By("checking AdminInitialized condition is True")
+			cmd = exec.Command("kubectl", "get", "sonarqubeinstance", instanceName,
+				"-n", testNS,
+				"-o", `jsonpath={.status.conditions[?(@.type=="AdminInitialized")].status}`)
+			adminCond, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(adminCond).To(Equal("True"))
+
+			By("verifying StatefulSet was created")
+			cmd = exec.Command("kubectl", "get", "statefulset", instanceName, "-n", testNS)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "StatefulSet should exist")
+
+			By("verifying Service was created")
+			cmd = exec.Command("kubectl", "get", "service", instanceName, "-n", testNS)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Service should exist")
+		})
+
+		It("SonarQubeQualityGate reaches Ready", func() {
+			By("creating SonarQubeQualityGate")
+			Expect(kubectlApply(fmt.Sprintf(`
+apiVersion: sonarqube.sonarqube.io/v1alpha1
+kind: SonarQubeQualityGate
+metadata:
+  name: e2e-gate
+  namespace: %s
+spec:
+  instanceRef:
+    name: %s
+  name: e2e-gate
+  conditions:
+  - metric: coverage
+    operator: LT
+    value: "80"
+  - metric: new_reliability_rating
+    operator: GT
+    value: "1"
+`, testNS, instanceName))).To(Succeed())
+
+			By("waiting for SonarQubeQualityGate to be Ready")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "sonarqubequalitygate", "e2e-gate",
+					"-n", testNS, "-o", "jsonpath={.status.phase}")
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("Ready"))
+			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("checking Ready condition is True")
+			cmd := exec.Command("kubectl", "get", "sonarqubequalitygate", "e2e-gate",
+				"-n", testNS,
+				"-o", `jsonpath={.status.conditions[?(@.type=="Ready")].status}`)
+			condStatus, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(condStatus).To(Equal("True"))
+		})
+
+		It("SonarQubeProject reaches Ready", func() {
+			By("creating SonarQubeProject")
+			Expect(kubectlApply(fmt.Sprintf(`
+apiVersion: sonarqube.sonarqube.io/v1alpha1
+kind: SonarQubeProject
+metadata:
+  name: e2e-project
+  namespace: %s
+spec:
+  instanceRef:
+    name: %s
+  key: e2e-project
+  name: E2E Test Project
+  visibility: private
+  qualityGateRef: e2e-gate
+`, testNS, instanceName))).To(Succeed())
+
+			By("waiting for SonarQubeProject to be Ready")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "sonarqubeproject", "e2e-project",
+					"-n", testNS, "-o", "jsonpath={.status.phase}")
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("Ready"))
+			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("checking status.projectUrl is set")
+			cmd := exec.Command("kubectl", "get", "sonarqubeproject", "e2e-project",
+				"-n", testNS, "-o", "jsonpath={.status.projectUrl}")
+			url, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(url).NotTo(BeEmpty(), "status.projectUrl should be set")
+
+			By("checking Ready condition is True")
+			cmd = exec.Command("kubectl", "get", "sonarqubeproject", "e2e-project",
+				"-n", testNS,
+				"-o", `jsonpath={.status.conditions[?(@.type=="Ready")].status}`)
+			condStatus, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(condStatus).To(Equal("True"))
+		})
+
+		It("deletion removes resources from SonarQube via finalizers", func() {
+			By("deleting SonarQubeProject and waiting for it to be gone")
+			cmd := exec.Command("kubectl", "delete", "sonarqubeproject", "e2e-project",
+				"-n", testNS, "--timeout=60s")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("deleting SonarQubeQualityGate and waiting for it to be gone")
+			cmd = exec.Command("kubectl", "delete", "sonarqubequalitygate", "e2e-gate",
+				"-n", testNS, "--timeout=60s")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+		})
 	})
 })
+
+// kubectlApply runs kubectl apply -f - with the given YAML as stdin.
+func kubectlApply(yaml string) error {
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(yaml)
+	_, err := utils.Run(cmd)
+	return err
+}
+
+// kubectlCreateSecret creates a secret idempotently using --dry-run=client | apply.
+func kubectlCreateSecret(ns, name string, literals ...string) error {
+	args := []string{"create", "secret", "generic", name, "-n", ns}
+	for _, l := range literals {
+		args = append(args, "--from-literal="+l)
+	}
+	args = append(args, "--dry-run=client", "-o", "yaml")
+	out, err := utils.Run(exec.Command("kubectl", args...))
+	if err != nil {
+		return err
+	}
+	applyCmd := exec.Command("kubectl", "apply", "-f", "-")
+	applyCmd.Stdin = strings.NewReader(out)
+	_, err = utils.Run(applyCmd)
+	return err
+}
 
 // serviceAccountToken returns a token for the specified service account in the given namespace.
 // It uses the Kubernetes TokenRequest API to generate a token by directly sending a request

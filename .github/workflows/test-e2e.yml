@@ -8,25 +8,44 @@ jobs:
   test-e2e:
     name: Run on Ubuntu
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+
     steps:
-      - name: Clone the code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: true
 
-      - name: Install the latest version of kind
+      - name: Install Kind
         run: |
           curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-$(go env GOARCH)
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
 
-      - name: Verify kind installation
+      - name: Verify Kind installation
         run: kind version
 
-      - name: Running Test e2e
+      - name: Run e2e tests
         run: |
           go mod tidy
           make test-e2e
+
+      - name: Collect debug info on failure
+        if: failure()
+        run: |
+          echo "=== All pods ==="
+          kubectl get pods -A || true
+          echo "=== Operator logs ==="
+          kubectl logs -n sonarqube-operator-system -l control-plane=controller-manager --tail=150 || true
+          echo "=== SonarQube pod logs ==="
+          kubectl logs -n default -l app=sonarqube --tail=100 || true
+          echo "=== SonarQubeInstance status ==="
+          kubectl describe sonarqubeinstance -A || true
+          echo "=== Events (default namespace) ==="
+          kubectl get events -n default --sort-by=.lastTimestamp | tail -50 || true
+          echo "=== Events (operator namespace) ==="
+          kubectl get events -n sonarqube-operator-system --sort-by=.lastTimestamp | tail -30 || true

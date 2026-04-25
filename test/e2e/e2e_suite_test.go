@@ -33,7 +33,7 @@ import (
 
 var (
 	// managerImage is the manager image to be built and loaded for testing.
-	managerImage = "example.com/sonarqube-operator:v0.0.1"
+	managerImage = "sonarqube-operator:e2e"
 	// shouldCleanupCertManager tracks whether CertManager was installed by this suite.
 	shouldCleanupCertManager = false
 )

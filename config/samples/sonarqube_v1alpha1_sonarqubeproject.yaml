@@ -1,9 +1,16 @@
 apiVersion: sonarqube.sonarqube.io/v1alpha1
 kind: SonarQubeProject
 metadata:
-  labels:
-    app.kubernetes.io/name: sonarqube-operator
-    app.kubernetes.io/managed-by: kustomize
-  name: sonarqubeproject-sample
+  name: my-project
+  namespace: default
 spec:
-  # TODO(user): Add fields here
+  instanceRef:
+    name: my-sonarqube
+  key: my-project-key
+  name: My Project
+  visibility: private
+  mainBranch: main
+  qualityGateRef: my-quality-gate
+  ciToken:
+    enabled: true
+    secretName: my-project-ci-token

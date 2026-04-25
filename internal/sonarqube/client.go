@@ -64,8 +64,9 @@ type QualityGate struct {
 }
 
 // Condition représente une condition d'un quality gate.
+// L'ID est une chaîne (UUID) depuis SonarQube 10.x.
 type Condition struct {
-	ID     int64  `json:"id"`
+	ID     string `json:"id"`
 	Metric string `json:"metric"`
 	Op     string `json:"op"`
 	Error  string `json:"error"`
@@ -83,7 +84,8 @@ type Token struct {
 // C'est une interface pour pouvoir injecter un mock dans les tests.
 type Client interface {
 	// Système
-	GetStatus(ctx context.Context) (string, error)
+	// GetStatus retourne le statut SonarQube ("UP", "STARTING"…) et la version réelle du serveur.
+	GetStatus(ctx context.Context) (status, version string, err error)
 	Restart(ctx context.Context) error
 	ChangeAdminPassword(ctx context.Context, currentPassword, newPassword string) error
 	ValidateAuth(ctx context.Context) error
@@ -104,8 +106,10 @@ type Client interface {
 	GetQualityGate(ctx context.Context, name string) (*QualityGate, error)
 	CreateQualityGate(ctx context.Context, name string) (*QualityGate, error)
 	DeleteQualityGate(ctx context.Context, name string) error
-	AddCondition(ctx context.Context, gateID int64, metric, op, value string) (*Condition, error)
-	RemoveCondition(ctx context.Context, conditionID int64) error
+	// AddCondition ajoute une condition à un quality gate identifié par son nom.
+	// Le paramètre gateId est déprécié depuis SonarQube 9.8 ; gateName est requis en 10.x.
+	AddCondition(ctx context.Context, gateName string, metric, op, value string) (*Condition, error)
+	RemoveCondition(ctx context.Context, conditionID string) error
 	SetAsDefault(ctx context.Context, name string) error
 	AssignQualityGate(ctx context.Context, projectKey, gateName string) error
 
@@ -215,19 +219,20 @@ func (c *httpClient) do(ctx context.Context, method, path string, params url.Val
 // --- Système ---
 
 type statusResponse struct {
-	Status string `json:"status"`
+	Status  string `json:"status"`
+	Version string `json:"version"`
 }
 
-func (c *httpClient) GetStatus(ctx context.Context) (string, error) {
-	body, err := c.do(ctx, http.MethodGet, "/api/system/status", nil)
-	if err != nil {
-		return "", err
+func (c *httpClient) GetStatus(ctx context.Context) (status, version string, err error) {
+	body, reqErr := c.do(ctx, http.MethodGet, "/api/system/status", nil)
+	if reqErr != nil {
+		return "", "", reqErr
 	}
 	var result statusResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return result.Status, nil
+	return result.Status, result.Version, nil
 }
 
 func (c *httpClient) Restart(ctx context.Context) error {
@@ -372,7 +377,7 @@ type qualityGateResponse struct {
 }
 
 type conditionResponse struct {
-	ID     int64  `json:"id"`
+	ID     string `json:"id"`
 	Metric string `json:"metric"`
 	Op     string `json:"op"`
 	Error  string `json:"error"`
@@ -426,12 +431,12 @@ func (c *httpClient) DeleteQualityGate(ctx context.Context, name string) error {
 	return err
 }
 
-func (c *httpClient) AddCondition(ctx context.Context, gateID int64, metric, op, value string) (*Condition, error) {
+func (c *httpClient) AddCondition(ctx context.Context, gateName string, metric, op, value string) (*Condition, error) {
 	body, err := c.do(ctx, http.MethodPost, "/api/qualitygates/create_condition", url.Values{
-		"gateId": {fmt.Sprintf("%d", gateID)},
-		"metric": {metric},
-		"op":     {op},
-		"error":  {value},
+		"gateName": {gateName},
+		"metric":   {metric},
+		"op":       {op},
+		"error":    {value},
 	})
 	if err != nil {
 		return nil, err
@@ -443,9 +448,9 @@ func (c *httpClient) AddCondition(ctx context.Context, gateID int64, metric, op,
 	return &Condition{ID: result.ID, Metric: result.Metric, Op: result.Op, Error: result.Error}, nil
 }
 
-func (c *httpClient) RemoveCondition(ctx context.Context, conditionID int64) error {
+func (c *httpClient) RemoveCondition(ctx context.Context, conditionID string) error {
 	_, err := c.do(ctx, http.MethodPost, "/api/qualitygates/delete_condition",
-		url.Values{"id": {fmt.Sprintf("%d", conditionID)}})
+		url.Values{"id": {conditionID}})
 	return err
 }
 
