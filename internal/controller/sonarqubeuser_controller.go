@@ -91,6 +91,15 @@ func (r *SonarQubeUserReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, nil
 	}
 
+	// Handle deletion FIRST — before the Phase != Ready early-return.
+	// A CR being deleted must always make progress, even if the target
+	// instance is not in a state that supports cleanup. Otherwise the
+	// finalizer is stuck and the CR never disappears from Kubernetes.
+	if !user.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, r.finalizeDeletion(ctx, user, instance)
+	}
+
+	// Not in deletion — wait for instance Ready before doing anything.
 	if instance.Status.Phase != phaseReady {
 		log.Info("Instance not ready, requeueing", "instance", instance.Name)
 		user.Status.Phase = phasePending
@@ -107,23 +116,12 @@ func (r *SonarQubeUserReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	token, err := getInstanceAdminToken(ctx, r.Client, instance)
 	if err != nil {
-		if !user.DeletionTimestamp.IsZero() {
-			if controllerutil.ContainsFinalizer(user, userFinalizer) {
-				controllerutil.RemoveFinalizer(user, userFinalizer)
-				return ctrl.Result{}, r.Update(ctx, user)
-			}
-			return ctrl.Result{}, nil
-		}
 		log.Info("Admin token not yet available, requeueing", "error", err.Error())
 		user.Status.Phase = phasePending
 		_ = r.Status().Update(ctx, user)
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
 	sonarClient := r.NewSonarClient(instance.Status.URL, token)
-
-	if !user.DeletionTimestamp.IsZero() {
-		return ctrl.Result{}, r.handleDeletion(ctx, user, sonarClient)
-	}
 
 	if !controllerutil.ContainsFinalizer(user, userFinalizer) {
 		controllerutil.AddFinalizer(user, userFinalizer)
@@ -133,6 +131,29 @@ func (r *SonarQubeUserReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	return r.reconcileUser(ctx, user, sonarClient)
+}
+
+// finalizeDeletion runs the finalizer logic for a user being deleted.
+// Best-effort SonarQube deactivation if the instance is Ready, otherwise
+// just remove the finalizer to unblock Kubernetes deletion.
+func (r *SonarQubeUserReconciler) finalizeDeletion(ctx context.Context, user *sonarqubev1alpha1.SonarQubeUser, instance *sonarqubev1alpha1.SonarQubeInstance) error {
+	log := logf.FromContext(ctx)
+
+	if !controllerutil.ContainsFinalizer(user, userFinalizer) {
+		return nil
+	}
+
+	if instance.Status.Phase == phaseReady {
+		if token, err := getInstanceAdminToken(ctx, r.Client, instance); err == nil {
+			sonarClient := r.NewSonarClient(instance.Status.URL, token)
+			return r.handleDeletion(ctx, user, sonarClient)
+		}
+	}
+
+	log.Info("Removing finalizer without SonarQube cleanup (instance not Ready or admin token unavailable)",
+		"instance.phase", instance.Status.Phase)
+	controllerutil.RemoveFinalizer(user, userFinalizer)
+	return r.Update(ctx, user)
 }
 
 func (r *SonarQubeUserReconciler) reconcileUser(ctx context.Context, user *sonarqubev1alpha1.SonarQubeUser, sonarClient sonarqube.Client) (ctrl.Result, error) {

@@ -9,7 +9,10 @@ replicaCount: 1
 
 image:
   # -- Container image repository.
-  repository: ghcr.io/BEIRDINH0S/sonarqube-operator
+  # OCI repository names must be lowercase — `helm install oci://ghcr.io/BEIRDINH0S/...`
+  # is rejected by GHCR with `invalid_reference`. The release workflow already
+  # lowercases at push time, so the published image lives at the lowercased path.
+  repository: ghcr.io/beirdinh0s/sonarqube-operator
   # -- Image pull policy.
   pullPolicy: IfNotPresent
   # -- Image tag. Defaults to .Chart.AppVersion when empty.

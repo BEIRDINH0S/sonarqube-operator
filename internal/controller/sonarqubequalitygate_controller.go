@@ -92,6 +92,15 @@ func (r *SonarQubeQualityGateReconciler) Reconcile(ctx context.Context, req ctrl
 		return ctrl.Result{}, nil
 	}
 
+	// Handle deletion FIRST — before the Phase != Ready early-return.
+	// A CR being deleted must always make progress, even if the target
+	// instance is not in a state that supports cleanup. Otherwise the
+	// finalizer is stuck and the CR never disappears from Kubernetes.
+	if !gate.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, r.finalizeDeletion(ctx, gate, instance)
+	}
+
+	// Not in deletion — wait for instance Ready before doing anything.
 	if instance.Status.Phase != phaseReady {
 		log.Info("Instance not ready, requeueing", "instance", instance.Name)
 		gate.Status.Phase = phasePending
@@ -108,23 +117,12 @@ func (r *SonarQubeQualityGateReconciler) Reconcile(ctx context.Context, req ctrl
 
 	token, err := getInstanceAdminToken(ctx, r.Client, instance)
 	if err != nil {
-		if !gate.DeletionTimestamp.IsZero() {
-			if controllerutil.ContainsFinalizer(gate, qualityGateFinalizer) {
-				controllerutil.RemoveFinalizer(gate, qualityGateFinalizer)
-				return ctrl.Result{}, r.Update(ctx, gate)
-			}
-			return ctrl.Result{}, nil
-		}
 		log.Info("Admin token not yet available, requeueing", "error", err.Error())
 		gate.Status.Phase = phasePending
 		_ = r.Status().Update(ctx, gate)
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
 	sonarClient := r.NewSonarClient(instance.Status.URL, token)
-
-	if !gate.DeletionTimestamp.IsZero() {
-		return ctrl.Result{}, r.handleDeletion(ctx, gate, sonarClient)
-	}
 
 	if !controllerutil.ContainsFinalizer(gate, qualityGateFinalizer) {
 		controllerutil.AddFinalizer(gate, qualityGateFinalizer)
@@ -134,6 +132,29 @@ func (r *SonarQubeQualityGateReconciler) Reconcile(ctx context.Context, req ctrl
 	}
 
 	return ctrl.Result{}, r.reconcileQualityGate(ctx, gate, sonarClient)
+}
+
+// finalizeDeletion runs the finalizer logic for a quality gate being deleted.
+// Best-effort SonarQube cleanup if the instance is Ready, otherwise just
+// remove the finalizer to unblock Kubernetes deletion.
+func (r *SonarQubeQualityGateReconciler) finalizeDeletion(ctx context.Context, gate *sonarqubev1alpha1.SonarQubeQualityGate, instance *sonarqubev1alpha1.SonarQubeInstance) error {
+	log := logf.FromContext(ctx)
+
+	if !controllerutil.ContainsFinalizer(gate, qualityGateFinalizer) {
+		return nil
+	}
+
+	if instance.Status.Phase == phaseReady {
+		if token, err := getInstanceAdminToken(ctx, r.Client, instance); err == nil {
+			sonarClient := r.NewSonarClient(instance.Status.URL, token)
+			return r.handleDeletion(ctx, gate, sonarClient)
+		}
+	}
+
+	log.Info("Removing finalizer without SonarQube cleanup (instance not Ready or admin token unavailable)",
+		"instance.phase", instance.Status.Phase)
+	controllerutil.RemoveFinalizer(gate, qualityGateFinalizer)
+	return r.Update(ctx, gate)
 }
 
 func (r *SonarQubeQualityGateReconciler) reconcileQualityGate(ctx context.Context, gate *sonarqubev1alpha1.SonarQubeQualityGate, sonarClient sonarqube.Client) error {

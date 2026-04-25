@@ -24,6 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -378,5 +379,43 @@ var _ = Describe("SonarQubeProject Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(mock.deleteProjectCalls).To(Equal(1))
+	})
+
+	// Régression : si l'instance flippe en Progressing (restart, OOM, install plugin…)
+	// pendant la suppression d'un project, le finalizer doit quand même être retiré.
+	// Avant le fix de Phase 8.1, le check `instance.Phase != Ready` faisait un
+	// early-return AVANT le check de DeletionTimestamp → finalizer bloqué pour toujours
+	// → CR coincé en Terminating.
+	It("retire le finalizer même quand l'instance est repassée en Progressing pendant la suppression", func() {
+		instanceName := "proj-instance-progressing-during-delete"
+		projectName := "proj-stuck-on-delete"
+		nn := types.NamespacedName{Name: projectName, Namespace: "default"}
+		defer deleteInstanceIfExists(instanceName)
+
+		// L'instance est Ready quand on crée le projet
+		newReadyInstance(ctx, instanceName)
+
+		p := newTestProject(projectName, instanceName, "proj-stuck-key")
+		p.Finalizers = []string{projectFinalizer}
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+
+		// L'instance repasse en Progressing (cas typique : restart pour appliquer un plugin)
+		instance := &sonarqubev1alpha1.SonarQubeInstance{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: instanceName, Namespace: "default"}, instance)).To(Succeed())
+		instance.Status.Phase = phaseProgressing
+		Expect(k8sClient.Status().Update(ctx, instance)).To(Succeed())
+
+		// Pendant ce temps, l'utilisateur supprime le project
+		Expect(k8sClient.Delete(ctx, p)).To(Succeed())
+
+		// Le mock SonarQube ne doit pas être appelé (pas de cleanup possible)
+		mock := &mockSonarClient{}
+		_, err := newProjectReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mock.deleteProjectCalls).To(Equal(0), "no SonarQube cleanup should be attempted when instance is non-Ready")
+
+		// Le project doit avoir été GC'd (finalizer retiré best-effort)
+		err = k8sClient.Get(ctx, nn, &sonarqubev1alpha1.SonarQubeProject{})
+		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "project should be garbage-collected once the finalizer is removed")
 	})
 })

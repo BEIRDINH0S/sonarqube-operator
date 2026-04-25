@@ -95,7 +95,15 @@ func (r *SonarQubePluginReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, nil
 	}
 
-	// L'instance doit être Ready avant d'agir
+	// Handle deletion FIRST — before the Phase != Ready early-return.
+	// A CR being deleted must always make progress, even if the target
+	// instance is not in a state that supports cleanup. Otherwise the
+	// finalizer is stuck and the CR never disappears from Kubernetes.
+	if !plugin.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, r.finalizeDeletion(ctx, plugin, instance)
+	}
+
+	// Not in deletion — wait for instance Ready before doing anything.
 	if instance.Status.Phase != phaseReady {
 		log.Info("Instance not ready yet, requeueing", "instance", instance.Name, "phase", instance.Status.Phase)
 		plugin.Status.Phase = phasePending
@@ -112,25 +120,12 @@ func (r *SonarQubePluginReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	token, err := getInstanceAdminToken(ctx, r.Client, instance)
 	if err != nil {
-		if !plugin.DeletionTimestamp.IsZero() {
-			// Token indisponible pendant la suppression — on retire le finalizer sans cleanup SonarQube
-			if controllerutil.ContainsFinalizer(plugin, pluginFinalizer) {
-				controllerutil.RemoveFinalizer(plugin, pluginFinalizer)
-				return ctrl.Result{}, r.Update(ctx, plugin)
-			}
-			return ctrl.Result{}, nil
-		}
 		log.Info("Admin token not yet available, requeueing", "error", err.Error())
 		plugin.Status.Phase = phasePending
 		_ = r.Status().Update(ctx, plugin)
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
 	sonarClient := r.NewSonarClient(instance.Status.URL, token)
-
-	// Gérer la suppression via finalizer
-	if !plugin.DeletionTimestamp.IsZero() {
-		return ctrl.Result{}, r.handleDeletion(ctx, plugin, sonarClient, instance)
-	}
 
 	// Ajouter le finalizer si absent
 	if !controllerutil.ContainsFinalizer(plugin, pluginFinalizer) {
@@ -141,6 +136,29 @@ func (r *SonarQubePluginReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	return r.reconcilePlugin(ctx, plugin, sonarClient, instance)
+}
+
+// finalizeDeletion runs the finalizer logic for a plugin being deleted.
+// Best-effort SonarQube cleanup if the instance is Ready, otherwise just
+// remove the finalizer to unblock Kubernetes deletion.
+func (r *SonarQubePluginReconciler) finalizeDeletion(ctx context.Context, plugin *sonarqubev1alpha1.SonarQubePlugin, instance *sonarqubev1alpha1.SonarQubeInstance) error {
+	log := logf.FromContext(ctx)
+
+	if !controllerutil.ContainsFinalizer(plugin, pluginFinalizer) {
+		return nil
+	}
+
+	if instance.Status.Phase == phaseReady {
+		if token, err := getInstanceAdminToken(ctx, r.Client, instance); err == nil {
+			sonarClient := r.NewSonarClient(instance.Status.URL, token)
+			return r.handleDeletion(ctx, plugin, sonarClient, instance)
+		}
+	}
+
+	log.Info("Removing finalizer without SonarQube cleanup (instance not Ready or admin token unavailable)",
+		"instance.phase", instance.Status.Phase)
+	controllerutil.RemoveFinalizer(plugin, pluginFinalizer)
+	return r.Update(ctx, plugin)
 }
 
 // reconcilePlugin compare l'état désiré au réel et agit.

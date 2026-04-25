@@ -93,6 +93,15 @@ func (r *SonarQubeProjectReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, nil
 	}
 
+	// Handle deletion FIRST — before the Phase != Ready early-return.
+	// A CR being deleted must always make progress, even if the target
+	// instance is not in a state that supports cleanup. Otherwise the
+	// finalizer is stuck and the CR never disappears from Kubernetes.
+	if !project.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, r.finalizeDeletion(ctx, project, instance)
+	}
+
+	// Not in deletion — wait for instance Ready before doing anything.
 	if instance.Status.Phase != phaseReady {
 		log.Info("Instance not ready, requeueing", "instance", instance.Name)
 		project.Status.Phase = phasePending
@@ -109,23 +118,12 @@ func (r *SonarQubeProjectReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	token, err := getInstanceAdminToken(ctx, r.Client, instance)
 	if err != nil {
-		if !project.DeletionTimestamp.IsZero() {
-			if controllerutil.ContainsFinalizer(project, projectFinalizer) {
-				controllerutil.RemoveFinalizer(project, projectFinalizer)
-				return ctrl.Result{}, r.Update(ctx, project)
-			}
-			return ctrl.Result{}, nil
-		}
 		log.Info("Admin token not yet available, requeueing", "error", err.Error())
 		project.Status.Phase = phasePending
 		_ = r.Status().Update(ctx, project)
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
 	sonarClient := r.NewSonarClient(instance.Status.URL, token)
-
-	if !project.DeletionTimestamp.IsZero() {
-		return ctrl.Result{}, r.handleDeletion(ctx, project, sonarClient)
-	}
 
 	if !controllerutil.ContainsFinalizer(project, projectFinalizer) {
 		controllerutil.AddFinalizer(project, projectFinalizer)
@@ -135,6 +133,34 @@ func (r *SonarQubeProjectReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	return ctrl.Result{}, r.reconcileProject(ctx, project, instance, sonarClient)
+}
+
+// finalizeDeletion runs the finalizer logic for a project being deleted.
+//
+// If the target instance is Ready and we can get an admin token, we attempt
+// the normal SonarQube-side cleanup via handleDeletion. Otherwise (instance
+// in Pending/Progressing/Failed, or token Secret missing), we remove the
+// finalizer best-effort and let Kubernetes GC the resource — leaving an
+// orphan project on the SonarQube side is preferable to a CR stuck in
+// Terminating indefinitely.
+func (r *SonarQubeProjectReconciler) finalizeDeletion(ctx context.Context, project *sonarqubev1alpha1.SonarQubeProject, instance *sonarqubev1alpha1.SonarQubeInstance) error {
+	log := logf.FromContext(ctx)
+
+	if !controllerutil.ContainsFinalizer(project, projectFinalizer) {
+		return nil
+	}
+
+	if instance.Status.Phase == phaseReady {
+		if token, err := getInstanceAdminToken(ctx, r.Client, instance); err == nil {
+			sonarClient := r.NewSonarClient(instance.Status.URL, token)
+			return r.handleDeletion(ctx, project, sonarClient)
+		}
+	}
+
+	log.Info("Removing finalizer without SonarQube cleanup (instance not Ready or admin token unavailable)",
+		"instance.phase", instance.Status.Phase)
+	controllerutil.RemoveFinalizer(project, projectFinalizer)
+	return r.Update(ctx, project)
 }
 
 func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, project *sonarqubev1alpha1.SonarQubeProject, instance *sonarqubev1alpha1.SonarQubeInstance, sonarClient sonarqube.Client) error {
