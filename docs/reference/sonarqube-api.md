@@ -127,6 +127,8 @@ operator considers the instance Ready only on `UP`.
 | `/api/projects/search` | GET | `projects` | Look up a project by key |
 | `/api/projects/delete` | POST | `project` | Delete a project (irreversible — wipes analysis history) |
 | `/api/projects/update_visibility` | POST | `project`, `visibility` | Drift correction |
+| `/api/project_branches/list` | GET | `project` | Read the live main branch (and other branches) |
+| `/api/project_branches/rename` | POST | `project`, `name` | Rename the main branch — used to reconcile `spec.mainBranch` |
 
 ### Quality Gates
 

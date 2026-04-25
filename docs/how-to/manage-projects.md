@@ -208,8 +208,11 @@ unconditionally calls `POST /api/qualitygates/select` on every reconcile
 when the field is non-empty, so a UI re-assignment is overwritten on
 the next cycle.
 
-`spec.name` and `spec.mainBranch` are **not** drift-corrected today —
-see [the project reference](../reference/crds/sonarqubeproject.md#updates-and-drift-correction)
+`spec.mainBranch` is also drift-corrected — when set, the operator reads the
+live main branch from `GET /api/project_branches/list` on every reconcile
+and calls `POST /api/project_branches/rename` if it differs. `spec.name` is
+**not** drift-corrected — see
+[the project reference](../reference/crds/sonarqubeproject.md#updates-and-drift-correction)
 for the full matrix.
 
 ---
