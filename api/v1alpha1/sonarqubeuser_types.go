@@ -53,6 +53,13 @@ type SonarQubeUserSpec struct {
 	// Groups assigned by other means are never removed.
 	// +optional
 	Groups []string `json:"groups,omitempty"`
+
+	// scmAccounts is the list of SCM identities (Git committer emails / names)
+	// linked to this user, used to attribute analysis findings correctly.
+	// Reconciled with set semantics: SonarQube's SCM account list is replaced
+	// by this list on each reconcile. Pass an empty list to clear all accounts.
+	// +optional
+	ScmAccounts []string `json:"scmAccounts,omitempty"`
 }
 
 // SonarQubeUserStatus defines the observed state of SonarQubeUser.

@@ -99,6 +99,8 @@ type mockSonarClient struct {
 	getUserGroupsErr         error
 	addUserToGroupCalls      int
 	removeUserFromGroupCalls int
+	updateScmAccountsCalls   int
+	lastSetScmAccounts       []string
 }
 
 func (m *mockSonarClient) GetStatus(_ context.Context) (string, string, error) {
@@ -237,6 +239,11 @@ func (m *mockSonarClient) AddUserToGroup(_ context.Context, _, _ string) error {
 }
 func (m *mockSonarClient) RemoveUserFromGroup(_ context.Context, _, _ string) error {
 	m.removeUserFromGroupCalls++
+	return nil
+}
+func (m *mockSonarClient) UpdateUserScmAccounts(_ context.Context, _ string, scmAccounts []string) error {
+	m.updateScmAccountsCalls++
+	m.lastSetScmAccounts = scmAccounts
 	return nil
 }
 

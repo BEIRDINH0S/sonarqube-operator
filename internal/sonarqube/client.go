@@ -160,6 +160,9 @@ type Client interface {
 	GetUserGroups(ctx context.Context, login string) ([]string, error)
 	AddUserToGroup(ctx context.Context, login, group string) error
 	RemoveUserFromGroup(ctx context.Context, login, group string) error
+	// UpdateUserScmAccounts replaces the user's SCM account list. Pass an empty
+	// slice to clear all linked accounts.
+	UpdateUserScmAccounts(ctx context.Context, login string, scmAccounts []string) error
 }
 
 // --- Implémentation HTTP ---
@@ -728,6 +731,18 @@ func (c *httpClient) UpdateUser(ctx context.Context, login, name, email string) 
 
 func (c *httpClient) DeactivateUser(ctx context.Context, login string) error {
 	_, err := c.do(ctx, http.MethodPost, "/api/users/deactivate", url.Values{"login": {login}})
+	return err
+}
+
+func (c *httpClient) UpdateUserScmAccounts(ctx context.Context, login string, scmAccounts []string) error {
+	params := url.Values{"login": {login}}
+	// SonarQube expects the scmAccount param repeated once per identity.
+	// An absent param clears the list — that's the desired behavior when
+	// scmAccounts is empty.
+	for _, a := range scmAccounts {
+		params.Add("scmAccount", a)
+	}
+	_, err := c.do(ctx, http.MethodPost, "/api/users/update", params)
 	return err
 }
 

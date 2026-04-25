@@ -108,6 +108,15 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
+              scmAccounts:
+                description: |-
+                  scmAccounts is the list of SCM identities (Git committer emails / names)
+                  linked to this user, used to attribute analysis findings correctly.
+                  Reconciled with set semantics: SonarQube's SCM account list is replaced
+                  by this list on each reconcile. Pass an empty list to clear all accounts.
+                items:
+                  type: string
+                type: array
             required:
             - instanceRef
             - login
