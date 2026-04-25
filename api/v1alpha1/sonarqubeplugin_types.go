@@ -24,6 +24,7 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // SonarQubePluginSpec defines the desired state of SonarQubePlugin
+// +kubebuilder:validation:XValidation:rule="!(has(self.source) && has(self.version) && self.version != '')",message="spec.version and spec.source are mutually exclusive"
 type SonarQubePluginSpec struct {
 	// instanceRef référence la SonarQubeInstance sur laquelle installer le plugin.
 	// +kubebuilder:validation:Required
@@ -35,8 +36,26 @@ type SonarQubePluginSpec struct {
 	Key string `json:"key"`
 
 	// version est la version du plugin à installer. Si omis, la dernière version est installée.
+	// Mutually exclusive with spec.source.
 	// +optional
 	Version string `json:"version,omitempty"`
+
+	// source installs the plugin from a custom URL with checksum verification,
+	// instead of the SonarQube marketplace. Mutually exclusive with spec.version.
+	// +optional
+	Source *PluginSource `json:"source,omitempty"`
+}
+
+// PluginSource describes a non-marketplace plugin artifact (e.g. internal mirror,
+// air-gapped SonarQube install).
+type PluginSource struct {
+	// url is the HTTPS URL to a plugin .jar file.
+	// +kubebuilder:validation:Pattern=`^https://.+`
+	URL string `json:"url"`
+
+	// checksum is the expected SHA-256 of the artifact, prefixed with "sha256:".
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-fA-F]{64}$`
+	Checksum string `json:"checksum"`
 }
 
 // InstanceRef référence une SonarQubeInstance par nom et namespace.

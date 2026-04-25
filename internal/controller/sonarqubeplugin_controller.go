@@ -163,6 +163,25 @@ func (r *SonarQubePluginReconciler) finalizeDeletion(ctx context.Context, plugin
 
 // reconcilePlugin compare l'état désiré au réel et agit.
 func (r *SonarQubePluginReconciler) reconcilePlugin(ctx context.Context, plugin *sonarqubev1alpha1.SonarQubePlugin, sonarClient sonarqube.Client, instance *sonarqubev1alpha1.SonarQubeInstance) (ctrl.Result, error) {
+	if plugin.Spec.Source != nil {
+		// Custom-URL installs require uploading the JAR into the SonarQube
+		// extensions/plugins PVC. That mechanism (helper Job + PVC mount)
+		// is not implemented yet — surface a clear Failed status so users
+		// don't sit in a perpetual Installing loop.
+		plugin.Status.Phase = phaseFailed
+		apimeta.SetStatusCondition(&plugin.Status.Conditions, metav1.Condition{
+			Type:               conditionInstalled,
+			Status:             metav1.ConditionFalse,
+			Reason:             "URLInstallNotImplemented",
+			Message:            "spec.source is accepted by the API but the install pipeline is not wired up yet",
+			ObservedGeneration: plugin.Generation,
+		})
+		_ = r.Status().Update(ctx, plugin)
+		r.Recorder.Event(plugin, corev1.EventTypeWarning, "URLInstallNotImplemented",
+			"installing plugins from spec.source is not implemented yet — use spec.version (marketplace) for now")
+		return ctrl.Result{}, nil
+	}
+
 	installed, err := sonarClient.ListInstalledPlugins(ctx)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("listing plugins: %w", err)

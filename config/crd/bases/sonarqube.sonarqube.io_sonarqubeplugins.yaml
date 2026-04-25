@@ -78,14 +78,36 @@ spec:
                 x-kubernetes-validations:
                 - message: spec.key is immutable after creation
                   rule: self == oldSelf
+              source:
+                description: |-
+                  source installs the plugin from a custom URL with checksum verification,
+                  instead of the SonarQube marketplace. Mutually exclusive with spec.version.
+                properties:
+                  checksum:
+                    description: checksum is the expected SHA-256 of the artifact,
+                      prefixed with "sha256:".
+                    pattern: ^sha256:[0-9a-fA-F]{64}$
+                    type: string
+                  url:
+                    description: url is the HTTPS URL to a plugin .jar file.
+                    pattern: ^https://.+
+                    type: string
+                required:
+                - checksum
+                - url
+                type: object
               version:
-                description: version est la version du plugin à installer. Si omis,
-                  la dernière version est installée.
+                description: |-
+                  version est la version du plugin à installer. Si omis, la dernière version est installée.
+                  Mutually exclusive with spec.source.
                 type: string
             required:
             - instanceRef
             - key
             type: object
+            x-kubernetes-validations:
+            - message: spec.version and spec.source are mutually exclusive
+              rule: '!(has(self.source) && has(self.version) && self.version != '''')'
           status:
             description: status defines the observed state of SonarQubePlugin
             properties:
