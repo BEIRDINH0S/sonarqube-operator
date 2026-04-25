@@ -308,6 +308,51 @@ func TestDeactivateUser(t *testing.T) {
 	assert.Equal(t, "john.doe", gotLogin)
 }
 
+func TestGetProjectMainBranch(t *testing.T) {
+	var gotProject string
+	client := newTestServer(t, map[string]http.HandlerFunc{
+		"/api/project_branches/list": func(w http.ResponseWriter, r *http.Request) {
+			gotProject = r.URL.Query().Get("project")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"branches":[{"name":"develop","isMain":true},{"name":"feature/x","isMain":false}]}`))
+		},
+	})
+
+	branch, err := client.GetProjectMainBranch(context.Background(), "my-project")
+	require.NoError(t, err)
+	assert.Equal(t, "develop", branch)
+	assert.Equal(t, "my-project", gotProject)
+}
+
+func TestGetProjectMainBranch_NoMain(t *testing.T) {
+	client := newTestServer(t, map[string]http.HandlerFunc{
+		"/api/project_branches/list": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"branches":[]}`))
+		},
+	})
+
+	_, err := client.GetProjectMainBranch(context.Background(), "my-project")
+	require.Error(t, err)
+}
+
+func TestRenameMainBranch(t *testing.T) {
+	var gotProject, gotName string
+	client := newTestServer(t, map[string]http.HandlerFunc{
+		"/api/project_branches/rename": func(w http.ResponseWriter, r *http.Request) {
+			_ = r.ParseForm()
+			gotProject = r.FormValue("project")
+			gotName = r.FormValue("name")
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+
+	err := client.RenameMainBranch(context.Background(), "my-project", "develop")
+	require.NoError(t, err)
+	assert.Equal(t, "my-project", gotProject)
+	assert.Equal(t, "develop", gotName)
+}
+
 func TestBearerTokenSent(t *testing.T) {
 	var receivedAuth string
 	client := newTestServer(t, map[string]http.HandlerFunc{

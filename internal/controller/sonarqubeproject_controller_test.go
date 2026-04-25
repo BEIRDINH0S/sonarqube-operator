@@ -358,6 +358,79 @@ var _ = Describe("SonarQubeProject Controller", func() {
 		Expect(string(secret.Data["token"])).To(Equal("sqp_expiry"))
 	})
 
+	It("renomme la branche principale si elle diffère du spec", func() {
+		instanceName := "proj-instance-branch"
+		projectName := "proj-branch"
+		nn := types.NamespacedName{Name: projectName, Namespace: "default"}
+		defer deleteProject(projectName)
+		defer deleteInstanceIfExists(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		p := newTestProject(projectName, instanceName, "proj-branch-key")
+		p.Spec.MainBranch = "develop"
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+
+		mock := &mockSonarClient{
+			getProjectResult:           &sonarqube.Project{Key: "proj-branch-key", Visibility: "private"},
+			getProjectMainBranchResult: "main",
+		}
+		_, err := newProjectReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(mock.renameMainBranchCalls).To(Equal(1))
+		Expect(mock.lastRenamedMainBranch).To(Equal("develop"))
+	})
+
+	It("ne renomme pas la branche principale si elle correspond déjà au spec", func() {
+		instanceName := "proj-instance-branch-noop"
+		projectName := "proj-branch-noop"
+		nn := types.NamespacedName{Name: projectName, Namespace: "default"}
+		defer deleteProject(projectName)
+		defer deleteInstanceIfExists(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		p := newTestProject(projectName, instanceName, "proj-branch-noop-key")
+		p.Spec.MainBranch = "main"
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+
+		mock := &mockSonarClient{
+			getProjectResult:           &sonarqube.Project{Key: "proj-branch-noop-key", Visibility: "private"},
+			getProjectMainBranchResult: "main",
+		}
+		_, err := newProjectReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(mock.renameMainBranchCalls).To(Equal(0))
+	})
+
+	It("continue la réconciliation si GetProjectMainBranch échoue", func() {
+		instanceName := "proj-instance-branch-err"
+		projectName := "proj-branch-err"
+		nn := types.NamespacedName{Name: projectName, Namespace: "default"}
+		defer deleteProject(projectName)
+		defer deleteInstanceIfExists(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		p := newTestProject(projectName, instanceName, "proj-branch-err-key")
+		p.Spec.MainBranch = "develop"
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+
+		mock := &mockSonarClient{
+			getProjectResult:        &sonarqube.Project{Key: "proj-branch-err-key", Visibility: "private"},
+			getProjectMainBranchErr: fmt.Errorf("API unavailable"),
+		}
+		_, err := newProjectReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		// Le rename ne doit pas avoir été tenté
+		Expect(mock.renameMainBranchCalls).To(Equal(0))
+
+		// Le projet doit quand même être Ready
+		updated := &sonarqubev1alpha1.SonarQubeProject{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal("Ready"))
+	})
+
 	It("supprime le projet SonarQube à la suppression de la ressource", func() {
 		instanceName := "proj-instance-delete"
 		projectName := "proj-delete"

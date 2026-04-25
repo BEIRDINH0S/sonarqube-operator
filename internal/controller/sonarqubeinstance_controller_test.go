@@ -50,14 +50,18 @@ type mockSonarClient struct {
 	lastInstalledVersion string
 	uninstallPluginCalls int
 	// project
-	getProjectResult       *sonarqube.Project
-	getProjectErr          error
-	createProjectCalls     int
-	deleteProjectCalls     int
-	assignQualityGateCalls int
-	generateTokenResult    *sonarqube.Token
-	generateTokenErr       error
-	revokeTokenCalls       int
+	getProjectResult           *sonarqube.Project
+	getProjectErr              error
+	createProjectCalls         int
+	deleteProjectCalls         int
+	assignQualityGateCalls     int
+	generateTokenResult        *sonarqube.Token
+	generateTokenErr           error
+	revokeTokenCalls           int
+	getProjectMainBranchResult string
+	getProjectMainBranchErr    error
+	renameMainBranchCalls      int
+	lastRenamedMainBranch      string
 	// auth
 	validateAuthErr error
 	// quality gate
@@ -119,6 +123,14 @@ func (m *mockSonarClient) DeleteProject(_ context.Context, _ string) error {
 	return nil
 }
 func (m *mockSonarClient) UpdateProjectVisibility(_ context.Context, _, _ string) error { return nil }
+func (m *mockSonarClient) GetProjectMainBranch(_ context.Context, _ string) (string, error) {
+	return m.getProjectMainBranchResult, m.getProjectMainBranchErr
+}
+func (m *mockSonarClient) RenameMainBranch(_ context.Context, _, branchName string) error {
+	m.renameMainBranchCalls++
+	m.lastRenamedMainBranch = branchName
+	return nil
+}
 func (m *mockSonarClient) ListQualityGates(_ context.Context) ([]sonarqube.QualityGate, error) {
 	return m.listQualityGatesResult, nil
 }

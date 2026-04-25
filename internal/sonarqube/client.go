@@ -108,6 +108,10 @@ type Client interface {
 	GetProject(ctx context.Context, key string) (*Project, error)
 	DeleteProject(ctx context.Context, key string) error
 	UpdateProjectVisibility(ctx context.Context, key, visibility string) error
+	// GetProjectMainBranch returns the name of the main branch of the project.
+	GetProjectMainBranch(ctx context.Context, projectKey string) (string, error)
+	// RenameMainBranch renames the main branch of the project.
+	RenameMainBranch(ctx context.Context, projectKey, branchName string) error
 
 	// Quality Gates
 	ListQualityGates(ctx context.Context) ([]QualityGate, error)
@@ -414,6 +418,38 @@ func (c *httpClient) UpdateProjectVisibility(ctx context.Context, key, visibilit
 	_, err := c.do(ctx, http.MethodPost, "/api/projects/update_visibility", url.Values{
 		"project":    {key},
 		"visibility": {visibility},
+	})
+	return err
+}
+
+type projectBranchesResponse struct {
+	Branches []struct {
+		Name   string `json:"name"`
+		IsMain bool   `json:"isMain"`
+	} `json:"branches"`
+}
+
+func (c *httpClient) GetProjectMainBranch(ctx context.Context, projectKey string) (string, error) {
+	body, err := c.do(ctx, http.MethodGet, "/api/project_branches/list", url.Values{"project": {projectKey}})
+	if err != nil {
+		return "", err
+	}
+	var result projectBranchesResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", err
+	}
+	for _, b := range result.Branches {
+		if b.IsMain {
+			return b.Name, nil
+		}
+	}
+	return "", fmt.Errorf("project %q: no main branch found", projectKey)
+}
+
+func (c *httpClient) RenameMainBranch(ctx context.Context, projectKey, branchName string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/project_branches/rename", url.Values{
+		"project": {projectKey},
+		"name":    {branchName},
 	})
 	return err
 }
