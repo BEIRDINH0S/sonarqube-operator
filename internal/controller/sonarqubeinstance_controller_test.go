@@ -112,6 +112,13 @@ type mockSonarClient struct {
 	revokeUserTokenCalls    int
 	revokedUserTokens       []string // "<login>:<name>"
 	generateUserTokenResult *sonarqube.Token
+	// groups (lifecycle)
+	groupExistsResult           bool
+	groupExistsErr              error
+	createGroupCalls            int
+	updateGroupDescriptionCalls int
+	deleteGroupCalls            int
+	lastCreatedGroup            string
 }
 
 func (m *mockSonarClient) GetStatus(_ context.Context) (string, string, error) {
@@ -281,6 +288,22 @@ func (m *mockSonarClient) GenerateUserToken(_ context.Context, login, name, toke
 func (m *mockSonarClient) RevokeUserToken(_ context.Context, login, name string) error {
 	m.revokeUserTokenCalls++
 	m.revokedUserTokens = append(m.revokedUserTokens, login+":"+name)
+	return nil
+}
+func (m *mockSonarClient) GroupExists(_ context.Context, _ string) (bool, error) {
+	return m.groupExistsResult, m.groupExistsErr
+}
+func (m *mockSonarClient) CreateGroup(_ context.Context, name, _ string) error {
+	m.createGroupCalls++
+	m.lastCreatedGroup = name
+	return nil
+}
+func (m *mockSonarClient) UpdateGroupDescription(_ context.Context, _, _ string) error {
+	m.updateGroupDescriptionCalls++
+	return nil
+}
+func (m *mockSonarClient) DeleteGroup(_ context.Context, _ string) error {
+	m.deleteGroupCalls++
 	return nil
 }
 

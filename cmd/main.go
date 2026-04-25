@@ -254,6 +254,17 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "SonarQubeBranchRule")
 		os.Exit(1)
 	}
+	if err := (&controller.SonarQubeGroupReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("sonarqubegroup-controller"), //nolint:staticcheck
+		NewSonarClient: func(baseURL, token string) sonarqube.Client {
+			return sonarqube.NewClient(baseURL, token)
+		},
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "SonarQubeGroup")
+		os.Exit(1)
+	}
 	if enableWebhook {
 		if err := sonarqubev1alpha1.SetupSonarQubeInstanceWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "SonarQubeInstance")
