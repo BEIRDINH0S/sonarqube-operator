@@ -80,9 +80,9 @@ func (r *SonarQubeProjectReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, nil
 	}
 
-	if instance.Status.Phase != "Ready" {
+	if instance.Status.Phase != conditionReady {
 		log.Info("Instance not ready, requeueing", "instance", instance.Name)
-		project.Status.Phase = "Pending"
+		project.Status.Phase = phasePending
 		apimeta.SetStatusCondition(&project.Status.Conditions, metav1.Condition{
 			Type:               conditionReady,
 			Status:             metav1.ConditionFalse,
@@ -104,7 +104,7 @@ func (r *SonarQubeProjectReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			return ctrl.Result{}, nil
 		}
 		log.Info("Admin token not yet available, requeueing", "error", err.Error())
-		project.Status.Phase = "Pending"
+		project.Status.Phase = phasePending
 		_ = r.Status().Update(ctx, project)
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
@@ -134,7 +134,7 @@ func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, proje
 		}
 		// Projet absent → créer
 		if err := sonarClient.CreateProject(ctx, project.Spec.Key, project.Spec.Name, project.Spec.Visibility); err != nil {
-			project.Status.Phase = "Failed"
+			project.Status.Phase = phaseFailed
 			apimeta.SetStatusCondition(&project.Status.Conditions, metav1.Condition{
 				Type:               conditionReady,
 				Status:             metav1.ConditionFalse,
@@ -167,7 +167,7 @@ func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, proje
 		}
 	}
 
-	project.Status.Phase = "Ready"
+	project.Status.Phase = conditionReady
 	project.Status.ProjectURL = fmt.Sprintf("%s/dashboard?id=%s", instance.Status.URL, project.Spec.Key)
 	apimeta.SetStatusCondition(&project.Status.Conditions, metav1.Condition{
 		Type:               conditionReady,

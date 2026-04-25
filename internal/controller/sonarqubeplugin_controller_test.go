@@ -56,14 +56,14 @@ func newReadyInstance(ctx context.Context, name string) {
 	}
 	_ = k8sClient.Create(ctx, tokenSecret)
 
-	instance.Status.Phase = "Ready"
+	instance.Status.Phase = conditionReady
 	instance.Status.URL = "http://" + name + ".default:9000"
 	instance.Status.AdminTokenSecretRef = tokenSecretName
 	_ = k8sClient.Status().Update(ctx, instance)
 }
 
 // newTestPlugin crée un SonarQubePlugin minimal pour les tests.
-func newTestPlugin(name, instanceName, key, version string) *sonarqubev1alpha1.SonarQubePlugin {
+func newTestPlugin(name, instanceName, version string) *sonarqubev1alpha1.SonarQubePlugin {
 	return &sonarqubev1alpha1.SonarQubePlugin{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -71,7 +71,7 @@ func newTestPlugin(name, instanceName, key, version string) *sonarqubev1alpha1.S
 		},
 		Spec: sonarqubev1alpha1.SonarQubePluginSpec{
 			InstanceRef: sonarqubev1alpha1.InstanceRef{Name: instanceName},
-			Key:         key,
+			Key:         "sonar-java",
 			Version:     version,
 		},
 	}
@@ -105,7 +105,7 @@ var _ = Describe("SonarQubePlugin Controller", func() {
 
 		// Instance créée mais sans status Ready
 		_ = k8sClient.Create(ctx, newTestInstance(instanceName))
-		Expect(k8sClient.Create(ctx, newTestPlugin(pluginName, instanceName, "sonar-java", "7.30.1"))).To(Succeed())
+		Expect(k8sClient.Create(ctx, newTestPlugin(pluginName, instanceName, "7.30.1"))).To(Succeed())
 
 		mock := &mockSonarClient{}
 		result, err := newPluginReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
@@ -114,7 +114,7 @@ var _ = Describe("SonarQubePlugin Controller", func() {
 
 		updated := &sonarqubev1alpha1.SonarQubePlugin{}
 		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
-		Expect(updated.Status.Phase).To(Equal("Pending"))
+		Expect(updated.Status.Phase).To(Equal(phasePending))
 	})
 
 	It("installe le plugin s'il n'est pas encore installé", func() {
@@ -125,7 +125,7 @@ var _ = Describe("SonarQubePlugin Controller", func() {
 		defer deleteInstance(instanceName)
 
 		newReadyInstance(ctx, instanceName)
-		Expect(k8sClient.Create(ctx, newTestPlugin(pluginName, instanceName, "sonar-java", "7.30.1"))).To(Succeed())
+		Expect(k8sClient.Create(ctx, newTestPlugin(pluginName, instanceName, "7.30.1"))).To(Succeed())
 
 		// Le mock retourne une liste vide → plugin absent
 		mock := &mockSonarClient{}
@@ -150,7 +150,7 @@ var _ = Describe("SonarQubePlugin Controller", func() {
 		defer deleteInstance(instanceName)
 
 		newReadyInstance(ctx, instanceName)
-		Expect(k8sClient.Create(ctx, newTestPlugin(pluginName, instanceName, "sonar-java", "7.30.1"))).To(Succeed())
+		Expect(k8sClient.Create(ctx, newTestPlugin(pluginName, instanceName, "7.30.1"))).To(Succeed())
 
 		// Le mock retourne sonar-java déjà installé en 7.30.1
 		mock := &mockSonarClient{
@@ -177,7 +177,7 @@ var _ = Describe("SonarQubePlugin Controller", func() {
 		defer deleteInstance(instanceName)
 
 		newReadyInstance(ctx, instanceName)
-		Expect(k8sClient.Create(ctx, newTestPlugin(pluginName, instanceName, "sonar-java", "7.31.0"))).To(Succeed())
+		Expect(k8sClient.Create(ctx, newTestPlugin(pluginName, instanceName, "7.31.0"))).To(Succeed())
 
 		// Plugin installé en 7.30.1, on veut 7.31.0
 		mock := &mockSonarClient{

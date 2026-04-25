@@ -132,7 +132,7 @@ var _ = Describe("SonarQubeProject Controller", func() {
 		newReadyInstance(ctx, instanceName)
 		Expect(k8sClient.Create(ctx, newTestProject(projectName, instanceName, "proj-exists-key"))).To(Succeed())
 
-		// GetProject retourne un projet existant avec la même visibilité
+		// GetProject returns an existing project with the same visibility
 		mock := &mockSonarClient{
 			getProjectResult: &sonarqube.Project{Key: "proj-exists-key", Visibility: "private"},
 		}

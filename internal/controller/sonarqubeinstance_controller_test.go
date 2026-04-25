@@ -198,7 +198,7 @@ var _ = Describe("buildStatefulSet", func() {
 		Expect(requests[corev1.ResourceCPU]).To(Equal(resource.MustParse("500m")))
 	})
 
-	It("respecte les ressources spécifiées dans la spec", func() {
+	It("respects the resources specified in the spec", func() {
 		instance := newTestInstance("test")
 		instance.Spec.Resources = corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
@@ -376,7 +376,7 @@ var _ = Describe("SonarQubeInstance Controller (envtest)", func() {
 		Expect(updated.Status.AdminTokenSecretRef).To(Equal(name + "-admin-token"))
 	})
 
-	It("crée le Secret admin token au premier démarrage quand SonarQube est UP", func() {
+	It("creates the admin token Secret on first startup when SonarQube is UP", func() {
 		name := "test-firstboot"
 		nn := types.NamespacedName{Name: name, Namespace: "default"}
 		defer deleteInstance(name)

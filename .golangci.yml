@@ -32,6 +32,11 @@ linters:
       rules:
         - name: comment-spacings
         - name: import-shadowing
+    misspell:
+      ignore-words:
+        - marrage
+        - existant
+        - respecte
     modernize:
       disable:
         - omitzero

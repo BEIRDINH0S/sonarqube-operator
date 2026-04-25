@@ -81,9 +81,9 @@ func (r *SonarQubePluginReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// L'instance doit être Ready avant d'agir
-	if instance.Status.Phase != "Ready" {
+	if instance.Status.Phase != conditionReady {
 		log.Info("Instance not ready yet, requeueing", "instance", instance.Name, "phase", instance.Status.Phase)
-		plugin.Status.Phase = "Pending"
+		plugin.Status.Phase = phasePending
 		apimeta.SetStatusCondition(&plugin.Status.Conditions, metav1.Condition{
 			Type:               conditionInstalled,
 			Status:             metav1.ConditionFalse,
@@ -106,7 +106,7 @@ func (r *SonarQubePluginReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, nil
 		}
 		log.Info("Admin token not yet available, requeueing", "error", err.Error())
-		plugin.Status.Phase = "Pending"
+		plugin.Status.Phase = phasePending
 		_ = r.Status().Update(ctx, plugin)
 		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
 	}
@@ -189,7 +189,7 @@ func (r *SonarQubePluginReconciler) installPlugin(ctx context.Context, plugin *s
 	_ = r.Status().Update(ctx, plugin)
 
 	if err := sonarClient.InstallPlugin(ctx, plugin.Spec.Key, plugin.Spec.Version); err != nil {
-		plugin.Status.Phase = "Failed"
+		plugin.Status.Phase = phaseFailed
 		apimeta.SetStatusCondition(&plugin.Status.Conditions, metav1.Condition{
 			Type:               conditionInstalled,
 			Status:             metav1.ConditionFalse,
@@ -202,8 +202,8 @@ func (r *SonarQubePluginReconciler) installPlugin(ctx context.Context, plugin *s
 		return ctrl.Result{}, fmt.Errorf("installing plugin: %w", err)
 	}
 
-	// Déclencher le redémarrage de SonarQube pour activer le plugin.
-	// Le redémarrage est asynchrone : SonarQube revient UP après quelques secondes.
+	// Trigger a SonarQube restart to activate the plugin.
+	// The restart is asynchronous: SonarQube comes back UP after a few seconds.
 	if err := sonarClient.Restart(ctx); err != nil {
 		r.Recorder.Event(plugin, corev1.EventTypeWarning, "RestartFailed", err.Error())
 	} else {

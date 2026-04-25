@@ -96,10 +96,7 @@ func (r *SonarQubeInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	serviceURL := fmt.Sprintf("http://%s.%s:9000", instance.Name, instance.Namespace)
-	result, err := r.reconcileHealth(ctx, instance, serviceURL)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
+	result := r.reconcileHealth(ctx, instance, serviceURL)
 
 	instance.Status.URL = serviceURL
 	if err := r.Status().Update(ctx, instance); err != nil {
@@ -109,9 +106,9 @@ func (r *SonarQubeInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	return result, nil
 }
 
-// reconcileHealth vérifie l'état de SonarQube et gère le premier démarrage.
-// Retourne RequeueAfter si SonarQube n'est pas encore prêt.
-func (r *SonarQubeInstanceReconciler) reconcileHealth(ctx context.Context, instance *sonarqubev1alpha1.SonarQubeInstance, serviceURL string) (ctrl.Result, error) {
+// reconcileHealth checks SonarQube health and handles the initial startup.
+// Returns RequeueAfter if SonarQube is not yet ready.
+func (r *SonarQubeInstanceReconciler) reconcileHealth(ctx context.Context, instance *sonarqubev1alpha1.SonarQubeInstance, serviceURL string) ctrl.Result {
 	log := logf.FromContext(ctx)
 
 	// GetStatus est un endpoint public — pas besoin de token
@@ -120,7 +117,7 @@ func (r *SonarQubeInstanceReconciler) reconcileHealth(ctx context.Context, insta
 	if err != nil {
 		log.Info("SonarQube not reachable yet, requeueing", "error", err.Error())
 		r.Recorder.Event(instance, corev1.EventTypeNormal, "Waiting", "Waiting for SonarQube to be reachable")
-		instance.Status.Phase = "Progressing"
+		instance.Status.Phase = phaseProgressing
 		apimeta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
 			Type:               conditionReady,
 			Status:             metav1.ConditionFalse,
@@ -128,7 +125,7 @@ func (r *SonarQubeInstanceReconciler) reconcileHealth(ctx context.Context, insta
 			Message:            fmt.Sprintf("SonarQube is not reachable: %s", err),
 			ObservedGeneration: instance.Generation,
 		})
-		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
+		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}
 	}
 
 	// La version est disponible dès que SonarQube répond, même en STARTING
@@ -139,7 +136,7 @@ func (r *SonarQubeInstanceReconciler) reconcileHealth(ctx context.Context, insta
 	if status != "UP" {
 		log.Info("SonarQube not ready yet", "status", status)
 		r.Recorder.Event(instance, corev1.EventTypeNormal, "Waiting", fmt.Sprintf("SonarQube status: %s", status))
-		instance.Status.Phase = "Progressing"
+		instance.Status.Phase = phaseProgressing
 		apimeta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
 			Type:               conditionReady,
 			Status:             metav1.ConditionFalse,
@@ -147,12 +144,12 @@ func (r *SonarQubeInstanceReconciler) reconcileHealth(ctx context.Context, insta
 			Message:            fmt.Sprintf("SonarQube is starting (status: %s)", status),
 			ObservedGeneration: instance.Generation,
 		})
-		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
+		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}
 	}
 
 	if err := r.initializeAdmin(ctx, instance, serviceURL); err != nil {
 		log.Error(err, "Failed to initialize admin, will retry")
-		instance.Status.Phase = "Progressing"
+		instance.Status.Phase = phaseProgressing
 		apimeta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
 			Type:               conditionReady,
 			Status:             metav1.ConditionFalse,
@@ -160,10 +157,10 @@ func (r *SonarQubeInstanceReconciler) reconcileHealth(ctx context.Context, insta
 			Message:            err.Error(),
 			ObservedGeneration: instance.Generation,
 		})
-		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}, nil
+		return ctrl.Result{RequeueAfter: requeueAfterHealthCheck}
 	}
 
-	instance.Status.Phase = "Ready"
+	instance.Status.Phase = conditionReady
 	apimeta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
 		Type:               conditionReady,
 		Status:             metav1.ConditionTrue,
@@ -172,7 +169,7 @@ func (r *SonarQubeInstanceReconciler) reconcileHealth(ctx context.Context, insta
 		ObservedGeneration: instance.Generation,
 	})
 	r.Recorder.Event(instance, corev1.EventTypeNormal, "Ready", "SonarQube instance is ready")
-	return ctrl.Result{}, nil
+	return ctrl.Result{}
 }
 
 // adminTokenSecretName retourne le nom du Secret qui stocke le token Bearer de l'admin.
@@ -400,7 +397,7 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
 					// fsGroup 1000 correspond à l'UID de l'image sonarqube officielle.
-					// Sans ça, le PVC monté est root:root et SonarQube crashe au démarrage.
+					// Without this, the mounted PVC is root:root and SonarQube crashes on startup.
 					SecurityContext: &corev1.PodSecurityContext{
 						FSGroup: &fsGroup,
 					},
@@ -425,7 +422,7 @@ func (r *SonarQubeInstanceReconciler) buildStatefulSet(instance *sonarqubev1alph
 								{Name: "http", ContainerPort: 9000, Protocol: corev1.ProtocolTCP},
 							},
 							Env: r.buildEnvVars(instance),
-							// startupProbe laisse jusqu'à 10 min au démarrage initial (Elasticsearch + migrations DB).
+							// startupProbe allows up to 10 min for initial startup (Elasticsearch + DB migrations).
 							// Une fois SonarQube UP, readiness et liveness prennent le relais rapidement.
 							StartupProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{

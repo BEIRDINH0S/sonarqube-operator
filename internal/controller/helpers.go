@@ -56,6 +56,10 @@ const (
 	conditionReady            = "Ready"
 	conditionAdminInitialized = "AdminInitialized"
 	conditionInstalled        = "Installed"
+
+	phasePending     = "Pending"
+	phaseFailed      = "Failed"
+	phaseProgressing = "Progressing"
 )
 
 // podSpecHash calcule un hash SHA-256 de la PodSpec pour détecter les drifts sans reflect.DeepEqual.

@@ -182,7 +182,7 @@ func main() {
 	if err := (&controller.SonarQubeInstanceReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("sonarqubeinstance-controller"),
+		Recorder: mgr.GetEventRecorderFor("sonarqubeinstance-controller"), //nolint:staticcheck
 		NewSonarClient: func(baseURL, token string) sonarqube.Client {
 			return sonarqube.NewClient(baseURL, token)
 		},
@@ -196,7 +196,7 @@ func main() {
 	if err := (&controller.SonarQubePluginReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("sonarqubeplugin-controller"),
+		Recorder: mgr.GetEventRecorderFor("sonarqubeplugin-controller"), //nolint:staticcheck
 		NewSonarClient: func(baseURL, token string) sonarqube.Client {
 			return sonarqube.NewClient(baseURL, token)
 		},
@@ -207,7 +207,7 @@ func main() {
 	if err := (&controller.SonarQubeProjectReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("sonarqubeproject-controller"),
+		Recorder: mgr.GetEventRecorderFor("sonarqubeproject-controller"), //nolint:staticcheck
 		NewSonarClient: func(baseURL, token string) sonarqube.Client {
 			return sonarqube.NewClient(baseURL, token)
 		},
@@ -218,7 +218,7 @@ func main() {
 	if err := (&controller.SonarQubeQualityGateReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("sonarqubequalitygate-controller"),
+		Recorder: mgr.GetEventRecorderFor("sonarqubequalitygate-controller"), //nolint:staticcheck
 		NewSonarClient: func(baseURL, token string) sonarqube.Client {
 			return sonarqube.NewClient(baseURL, token)
 		},

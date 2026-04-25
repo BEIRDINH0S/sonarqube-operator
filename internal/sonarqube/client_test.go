@@ -30,7 +30,7 @@ import (
 
 // newTestServer crée un faux serveur HTTP SonarQube pour les tests.
 // handlers est une map path → fonction de réponse.
-func newTestServer(t *testing.T, handlers map[string]http.HandlerFunc) (*httptest.Server, sonarqube.Client) {
+func newTestServer(t *testing.T, handlers map[string]http.HandlerFunc) sonarqube.Client {
 	t.Helper()
 	mux := http.NewServeMux()
 	for path, handler := range handlers {
@@ -38,11 +38,11 @@ func newTestServer(t *testing.T, handlers map[string]http.HandlerFunc) (*httptes
 	}
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return srv, sonarqube.NewClient(srv.URL, "test-token")
+	return sonarqube.NewClient(srv.URL, "test-token")
 }
 
 func TestGetStatus(t *testing.T) {
-	_, client := newTestServer(t, map[string]http.HandlerFunc{
+	client := newTestServer(t, map[string]http.HandlerFunc{
 		"/api/system/status": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"status":"UP","version":"10.3"}`))
@@ -56,7 +56,7 @@ func TestGetStatus(t *testing.T) {
 }
 
 func TestGetStatus_SonarQubeError(t *testing.T) {
-	_, client := newTestServer(t, map[string]http.HandlerFunc{
+	client := newTestServer(t, map[string]http.HandlerFunc{
 		"/api/system/status": func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = w.Write([]byte(`{"errors":[{"msg":"Service unavailable"}]}`))
@@ -69,7 +69,7 @@ func TestGetStatus_SonarQubeError(t *testing.T) {
 }
 
 func TestListInstalledPlugins(t *testing.T) {
-	_, client := newTestServer(t, map[string]http.HandlerFunc{
+	client := newTestServer(t, map[string]http.HandlerFunc{
 		"/api/plugins/installed": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"plugins":[
@@ -88,7 +88,7 @@ func TestListInstalledPlugins(t *testing.T) {
 
 func TestInstallPlugin(t *testing.T) {
 	var receivedKey, receivedVersion string
-	_, client := newTestServer(t, map[string]http.HandlerFunc{
+	client := newTestServer(t, map[string]http.HandlerFunc{
 		"/api/plugins/install": func(w http.ResponseWriter, r *http.Request) {
 			require.NoError(t, r.ParseForm())
 			receivedKey = r.FormValue("key")
@@ -105,7 +105,7 @@ func TestInstallPlugin(t *testing.T) {
 
 func TestUninstallPlugin(t *testing.T) {
 	var receivedKey string
-	_, client := newTestServer(t, map[string]http.HandlerFunc{
+	client := newTestServer(t, map[string]http.HandlerFunc{
 		"/api/plugins/uninstall": func(w http.ResponseWriter, r *http.Request) {
 			require.NoError(t, r.ParseForm())
 			receivedKey = r.FormValue("key")
@@ -120,7 +120,7 @@ func TestUninstallPlugin(t *testing.T) {
 
 func TestCreateProject(t *testing.T) {
 	var receivedKey, receivedName, receivedVisibility string
-	_, client := newTestServer(t, map[string]http.HandlerFunc{
+	client := newTestServer(t, map[string]http.HandlerFunc{
 		"/api/projects/create": func(w http.ResponseWriter, r *http.Request) {
 			require.NoError(t, r.ParseForm())
 			receivedKey = r.FormValue("project")
@@ -139,7 +139,7 @@ func TestCreateProject(t *testing.T) {
 }
 
 func TestGetProject(t *testing.T) {
-	_, client := newTestServer(t, map[string]http.HandlerFunc{
+	client := newTestServer(t, map[string]http.HandlerFunc{
 		"/api/projects/search": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"components":[{"key":"my-project","name":"My Project","visibility":"private"}]}`))
@@ -153,7 +153,7 @@ func TestGetProject(t *testing.T) {
 }
 
 func TestGetProject_NotFound(t *testing.T) {
-	_, client := newTestServer(t, map[string]http.HandlerFunc{
+	client := newTestServer(t, map[string]http.HandlerFunc{
 		"/api/projects/search": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"components":[]}`))
@@ -166,7 +166,7 @@ func TestGetProject_NotFound(t *testing.T) {
 }
 
 func TestCreateQualityGate(t *testing.T) {
-	_, client := newTestServer(t, map[string]http.HandlerFunc{
+	client := newTestServer(t, map[string]http.HandlerFunc{
 		"/api/qualitygates/create": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":42,"name":"strict-gate"}`))
@@ -180,7 +180,7 @@ func TestCreateQualityGate(t *testing.T) {
 }
 
 func TestAddCondition(t *testing.T) {
-	_, client := newTestServer(t, map[string]http.HandlerFunc{
+	client := newTestServer(t, map[string]http.HandlerFunc{
 		"/api/qualitygates/create_condition": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":"10","metric":"coverage","op":"LT","error":"80"}`))
@@ -194,7 +194,7 @@ func TestAddCondition(t *testing.T) {
 }
 
 func TestGetQualityGate(t *testing.T) {
-	_, client := newTestServer(t, map[string]http.HandlerFunc{
+	client := newTestServer(t, map[string]http.HandlerFunc{
 		"/api/qualitygates/show": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":7,"name":"strict-gate","conditions":[
@@ -212,7 +212,7 @@ func TestGetQualityGate(t *testing.T) {
 }
 
 func TestGetQualityGate_NotFound(t *testing.T) {
-	_, client := newTestServer(t, map[string]http.HandlerFunc{
+	client := newTestServer(t, map[string]http.HandlerFunc{
 		"/api/qualitygates/show": func(w http.ResponseWriter, _ *http.Request) {
 			// SonarQube retourne 400 avec un body d'erreur quand le gate est absent
 			w.WriteHeader(http.StatusBadRequest)
@@ -238,7 +238,7 @@ func TestGetQualityGate_NetworkError_NotTreatedAsNotFound(t *testing.T) {
 
 func TestBearerTokenSent(t *testing.T) {
 	var receivedAuth string
-	_, client := newTestServer(t, map[string]http.HandlerFunc{
+	client := newTestServer(t, map[string]http.HandlerFunc{
 		"/api/plugins/installed": func(w http.ResponseWriter, r *http.Request) {
 			receivedAuth = r.Header.Get("Authorization")
 			w.Header().Set("Content-Type", "application/json")
