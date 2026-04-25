@@ -94,6 +94,31 @@ spec:
                 x-kubernetes-validations:
                 - message: spec.key est immuable après création
                   rule: self == oldSelf
+              links:
+                description: |-
+                  links is the list of project links surfaced in the SonarQube UI. The
+                  operator manages links it created (tracked in status.managedLinkNames):
+                  links added directly via the SonarQube UI are not removed unless their
+                  name was previously managed by the operator.
+                items:
+                  description: |-
+                    ProjectLink is a named URL surfaced on a project's overview page.
+                    SonarQube derives the link type (homepage, ci, issue, scm, scm_dev, other)
+                    from the name automatically — there is no type field in the create API.
+                  properties:
+                    name:
+                      description: name is the display name of the link.
+                      minLength: 1
+                      type: string
+                    url:
+                      description: url is the link target.
+                      minLength: 1
+                      type: string
+                  required:
+                  - name
+                  - url
+                  type: object
+                type: array
               mainBranch:
                 default: main
                 description: mainBranch est la branche principale du projet.
@@ -106,6 +131,13 @@ spec:
                 description: qualityGateRef est le nom du SonarQubeQualityGate à associer
                   au projet.
                 type: string
+              tags:
+                description: |-
+                  tags is the full set of tags to apply to the project. Reconciled with set
+                  semantics: SonarQube's tag list is replaced by this list on each reconcile.
+                items:
+                  type: string
+                type: array
               visibility:
                 default: private
                 description: visibility définit la visibilité du projet.
@@ -181,6 +213,14 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              managedLinkNames:
+                description: |-
+                  managedLinkNames tracks the names of project links the operator created.
+                  Used to decide which links to remove when they leave spec.links — links
+                  created directly via the UI are not in this list and stay untouched.
+                items:
+                  type: string
+                type: array
               phase:
                 description: phase est l'état courant du projet.
                 enum:

@@ -55,6 +55,14 @@ type Project struct {
 	Visibility string `json:"visibility"`
 }
 
+// ProjectLink is a named URL displayed on a project's overview page.
+type ProjectLink struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+	URL  string `json:"url"`
+}
+
 // QualityGate représente un quality gate SonarQube.
 type QualityGate struct {
 	ID         string      `json:"id"`
@@ -115,6 +123,14 @@ type Client interface {
 	GetProjectMainBranch(ctx context.Context, projectKey string) (string, error)
 	// RenameMainBranch renames the main branch of the project.
 	RenameMainBranch(ctx context.Context, projectKey, branchName string) error
+	// SetProjectTags replaces the project's tag list with `tags` (set semantics).
+	SetProjectTags(ctx context.Context, projectKey string, tags []string) error
+	// ListProjectLinks returns the project links currently registered in SonarQube.
+	ListProjectLinks(ctx context.Context, projectKey string) ([]ProjectLink, error)
+	// CreateProjectLink creates a link and returns its assigned ID.
+	CreateProjectLink(ctx context.Context, projectKey, name, linkURL string) (string, error)
+	// DeleteProjectLink removes a link by its SonarQube-assigned ID.
+	DeleteProjectLink(ctx context.Context, linkID string) error
 
 	// Quality Gates
 	ListQualityGates(ctx context.Context) ([]QualityGate, error)
@@ -405,6 +421,55 @@ func IsRiskConsentRequired(err error) bool {
 
 type projectSearchResponse struct {
 	Components []Project `json:"components"`
+}
+
+type projectLinksResponse struct {
+	Links []ProjectLink `json:"links"`
+}
+
+type projectLinkCreateResponse struct {
+	Link ProjectLink `json:"link"`
+}
+
+func (c *httpClient) SetProjectTags(ctx context.Context, projectKey string, tags []string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/project_tags/set", url.Values{
+		"project": {projectKey},
+		"tags":    {strings.Join(tags, ",")},
+	})
+	return err
+}
+
+func (c *httpClient) ListProjectLinks(ctx context.Context, projectKey string) ([]ProjectLink, error) {
+	body, err := c.do(ctx, http.MethodGet, "/api/project_links/search", url.Values{"projectKey": {projectKey}})
+	if err != nil {
+		return nil, err
+	}
+	var result projectLinksResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return result.Links, nil
+}
+
+func (c *httpClient) CreateProjectLink(ctx context.Context, projectKey, name, linkURL string) (string, error) {
+	body, err := c.do(ctx, http.MethodPost, "/api/project_links/create", url.Values{
+		"projectKey": {projectKey},
+		"name":       {name},
+		"url":        {linkURL},
+	})
+	if err != nil {
+		return "", err
+	}
+	var result projectLinkCreateResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", err
+	}
+	return result.Link.ID, nil
+}
+
+func (c *httpClient) DeleteProjectLink(ctx context.Context, linkID string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/project_links/delete", url.Values{"id": {linkID}})
+	return err
 }
 
 func (c *httpClient) CreateProject(ctx context.Context, key, name, visibility string) error {

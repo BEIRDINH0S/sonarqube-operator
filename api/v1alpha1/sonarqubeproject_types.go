@@ -55,6 +55,31 @@ type SonarQubeProjectSpec struct {
 	// ciToken configure la génération d'un token CI stocké dans un Secret Kubernetes.
 	// +optional
 	CIToken CITokenSpec `json:"ciToken,omitempty"`
+
+	// tags is the full set of tags to apply to the project. Reconciled with set
+	// semantics: SonarQube's tag list is replaced by this list on each reconcile.
+	// +optional
+	Tags []string `json:"tags,omitempty"`
+
+	// links is the list of project links surfaced in the SonarQube UI. The
+	// operator manages links it created (tracked in status.managedLinkNames):
+	// links added directly via the SonarQube UI are not removed unless their
+	// name was previously managed by the operator.
+	// +optional
+	Links []ProjectLink `json:"links,omitempty"`
+}
+
+// ProjectLink is a named URL surfaced on a project's overview page.
+// SonarQube derives the link type (homepage, ci, issue, scm, scm_dev, other)
+// from the name automatically — there is no type field in the create API.
+type ProjectLink struct {
+	// name is the display name of the link.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// url is the link target.
+	// +kubebuilder:validation:MinLength=1
+	URL string `json:"url"`
 }
 
 // CITokenSpec configure la génération du token CI.
@@ -89,6 +114,12 @@ type SonarQubeProjectStatus struct {
 	// tokenSecretRef est le nom du Secret contenant le token CI.
 	// +optional
 	TokenSecretRef string `json:"tokenSecretRef,omitempty"`
+
+	// managedLinkNames tracks the names of project links the operator created.
+	// Used to decide which links to remove when they leave spec.links — links
+	// created directly via the UI are not in this list and stay untouched.
+	// +optional
+	ManagedLinkNames []string `json:"managedLinkNames,omitempty"`
 
 	// +listType=map
 	// +listMapKey=type
