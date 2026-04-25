@@ -120,7 +120,7 @@ does not manage PostgreSQL itself.
 | `host` | string | yes | — | PostgreSQL hostname (e.g. `postgres`, `db.example.com`). |
 | `port` | int32 | no | `5432` | PostgreSQL port. |
 | `name` | string | yes | — | Database name. The user pointed to by `secretRef` must own it. |
-| `secretRef` | string | yes | — | Name of a Secret in the same namespace with keys `POSTGRES_USER` and `POSTGRES_PASSWORD`. |
+| `secretRef` | string | yes | — | Name of a Secret in the same namespace with keys `username` and `password` — used by the operator to inject `SONAR_JDBC_USERNAME` and `SONAR_JDBC_PASSWORD` into the pod. |
 
 ### `adminSecretRef`
 
@@ -196,7 +196,8 @@ When `enabled: false` (default), reach the instance through the Service
 | **Required** | no |
 
 Extra JVM flags passed to the SonarQube web process via the
-`SONAR_WEB_JAVAOPTS` env var. Use it to tune heap size or GC parameters.
+`SONAR_WEB_JAVAADDITIONALOPTS` env var. Use it to tune heap size or GC
+parameters.
 
 ### `skipSysctlInit`
 
@@ -234,12 +235,13 @@ status:
   conditions:
     - type: Ready
       status: "True"
-      reason: SonarQubeUp
-      message: SonarQube system status is UP
+      reason: Ready
+      message: SonarQube instance is ready
       lastTransitionTime: "2026-04-25T10:42:00Z"
-    - type: Progressing
-      status: "False"
-      reason: ReconcileSucceeded
+    - type: AdminInitialized
+      status: "True"
+      reason: TokenExists
+      message: Admin token stored in Secret "sonarqube-admin-token"
       lastTransitionTime: "2026-04-25T10:42:00Z"
 ```
 
@@ -250,14 +252,20 @@ status:
 | `Pending` | The instance has just been created. Child resources are being provisioned. |
 | `Progressing` | Pods are starting, but `/api/system/status` does not yet return `UP`. |
 | `Ready` | SonarQube responds with `UP`. Admin token is initialized. The instance can be targeted by other CRDs. |
-| `Degraded` | The instance was previously `Ready` but is now failing health checks. |
+
+!!! note "`Degraded` is reserved"
+    The CRD enum allows a `Degraded` phase, but the controller does not
+    currently set it. A failing-once-ready instance flips back to
+    `Progressing` until SonarQube responds again. `Degraded` may be
+    introduced in a future version with a distinct semantics — do not
+    rely on it today.
 
 ### Conditions vocabulary
 
 | Type | Meaning |
 |---|---|
-| `Ready` | The instance is fully up and reachable. |
-| `Progressing` | The operator is actively making changes (rolling out, bootstrapping). |
+| `Ready` | The instance is fully up and reachable. The condition's `Reason` cycles through `Starting`, `Unreachable`, `Restarting`, `AdminInitFailed`, and `Ready`. |
+| `AdminInitialized` | The bootstrap of the admin password and Bearer token has succeeded. Set once on first reconcile, then asserted on every cycle. |
 
 ### Other status fields
 
@@ -279,9 +287,10 @@ status:
    child point back at the `SonarQubeInstance`.
 2. **Bootstrap** — On first start, SonarQube starts with `admin/admin`. The
    operator detects this, calls `POST /api/users/change_password` to set
-   the password from `adminSecretRef`, then issues a Bearer token via
-   `POST /api/user_tokens/generate` and stores it in a `Secret` named
-   `<instance>-admin-token`. `status.adminTokenSecretRef` is updated.
+   the password from `adminSecretRef` (key `password`), then issues a
+   Bearer token via `POST /api/user_tokens/generate` and stores it in a
+   `Secret` named `<instance>-admin-token` (key `token`).
+   `status.adminTokenSecretRef` is updated.
 3. **Ready** — When `/api/system/status` returns `UP`, the controller
    transitions `phase` to `Ready` and asserts the `Ready=True` condition.
 

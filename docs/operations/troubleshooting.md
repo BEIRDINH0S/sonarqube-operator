@@ -69,16 +69,19 @@ Common causes:
   <port>`.
 - **Wrong PostgreSQL credentials** — SonarQube logs show
   `password authentication failed`. The Secret in `database.secretRef`
-  must have keys `POSTGRES_USER` and `POSTGRES_PASSWORD` matching the
-  database.
+  must have the keys `username` and `password` (operator reads these
+  to inject `SONAR_JDBC_USERNAME` / `SONAR_JDBC_PASSWORD`), and they
+  must match what your PostgreSQL accepts.
 - **Database schema mismatch** — A previous instance ran a different
   SonarQube major version against the same DB and the schema is from
   9.x while the new instance is 10.x (or vice versa). Either upgrade,
   or restore the matching backup.
 
-### `Phase: Degraded`
+### `Phase: Progressing` after being `Ready`
 
-The instance was previously `Ready` but is now failing health checks.
+The instance was previously `Ready` but is now failing health checks
+(it falls back to `Progressing`, not `Degraded` — see the
+[note in the reference](../reference/crds/sonarqubeinstance.md#phase)).
 The Pod may still be running but unresponsive. Common causes:
 
 - **JVM crash** — `kubectl logs` shows a stack trace, then nothing.

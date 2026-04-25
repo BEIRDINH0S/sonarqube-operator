@@ -40,7 +40,12 @@ metadata:
   name: postgres-creds
   namespace: sonarqube-demo
 type: Opaque
+# The operator reads `username` and `password` from this Secret. The Postgres
+# image needs the same values under POSTGRES_USER / POSTGRES_PASSWORD, so we
+# duplicate them with both naming conventions.
 stringData:
+  username: sonarqube
+  password: changeme-please
   POSTGRES_USER: sonarqube
   POSTGRES_PASSWORD: changeme-please
 ---
@@ -75,10 +80,13 @@ spec:
       containers:
         - name: postgres
           image: postgres:16-alpine
-          envFrom:
-            - secretRef:
-                name: postgres-creds
           env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef: { name: postgres-creds, key: POSTGRES_USER }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: postgres-creds, key: POSTGRES_PASSWORD }
             - name: POSTGRES_DB
               value: sonarqube
             - name: PGDATA
@@ -112,7 +120,7 @@ kubectl rollout status statefulset/postgres -n sonarqube-demo
     - Or any managed PostgreSQL (Cloud SQL, RDS, Azure Database).
 
     The `database` block of `SonarQubeInstance` only needs a host, port,
-    database name, and a Secret with `POSTGRES_USER`/`POSTGRES_PASSWORD`.
+    database name, and a Secret with `username` and `password` keys.
 
 ---
 
@@ -268,7 +276,6 @@ spec:
   key: hello-world
   name: Hello World
   visibility: private
-  mainBranch: main
   qualityGateRef: strict-gate
   ciToken:
     enabled: true

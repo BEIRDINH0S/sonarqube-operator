@@ -154,9 +154,12 @@ spec:
 kubectl apply -f my-project.yaml
 ```
 
-To revert to the instance default gate, leave `qualityGateRef` blank or
-remove the field. The operator clears the project-specific assignment via
-`POST /api/qualitygates/deselect`.
+!!! warning "Emptying `qualityGateRef` does not unassign the gate"
+    Leaving `qualityGateRef` blank or removing the field stops the
+    operator from re-asserting any gate, but it does **not** unassign
+    the gate that was previously selected on the project. To explicitly
+    unassign, either re-assign the project to a different gate (e.g. the
+    instance default), or unassign manually through the SonarQube UI.
 
 ---
 
@@ -176,36 +179,38 @@ UI gets reverted.
 
 ## Rename a project
 
-Change `spec.name`, apply.
+`spec.name` is **only used at project creation**. Once the project
+exists in SonarQube, changing `spec.name` in the manifest has no effect
+— the operator does not call any rename endpoint. To rename:
 
-```yaml
-spec:
-  name: Backend API v2     # was: Backend API
-```
+1. Update `spec.name` in Git (so the manifest stays the source of
+   truth for new clusters).
+2. Rename the project manually through the SonarQube UI or
+   `POST /api/projects/update`.
 
-The display name is updated. **Do not** try to change `spec.key` — it's
-immutable and the API will reject the update. To re-key a project,
-delete it and recreate with the new key (loses all analysis history).
+`spec.key` is immutable in any case; the API rejects updates. To
+re-key, delete and recreate (losing all analysis history).
 
 ---
 
 ## Drift detection in action
 
-Suppose a teammate has UI access and changes the visibility from `private`
-to `public` through the SonarQube UI. On the next reconcile (~30s by
-default), the operator:
+The operator currently drift-corrects **`visibility`** on
+`SonarQubeProject`. If a teammate flips the project's visibility
+through the SonarQube UI, the next reconcile (~30s by default):
 
-1. Reads the live state via `GET /api/projects/search`.
+1. Reads the live state via `GET /api/projects/search?projects=<key>`.
 2. Compares against the spec (`visibility: private`).
 3. Calls `POST /api/projects/update_visibility` to revert.
-4. Logs an Event:
-   ```
-   Normal  ProjectDriftCorrected  10s   sonarqubeproject-controller
-   reverted spec.visibility from public to private (matches operator-managed spec)
-   ```
 
-This is the value of declarative project management: the spec in Git is
-the source of truth, period.
+`spec.qualityGateRef` is also effectively kept in sync — the operator
+unconditionally calls `POST /api/qualitygates/select` on every reconcile
+when the field is non-empty, so a UI re-assignment is overwritten on
+the next cycle.
+
+`spec.name` and `spec.mainBranch` are **not** drift-corrected today —
+see [the project reference](../reference/crds/sonarqubeproject.md#updates-and-drift-correction)
+for the full matrix.
 
 ---
 

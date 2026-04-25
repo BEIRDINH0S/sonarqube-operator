@@ -174,9 +174,10 @@ You upgraded a plugin and SonarQube is now refusing to start? Two paths.
 Edit the manifest, set `version` back to the previous value, apply. The
 operator does an in-place "upgrade" to the older version.
 
-If the instance is in `Degraded` phase because SonarQube doesn't start,
-the operator can still install plugins — it just can't observe them as
-ready until SonarQube comes back up.
+If SonarQube fails to come back up, the operator can still call the
+plugin install endpoint, but the install will only complete once
+SonarQube is healthy again — the plugin's phase will sit at `Installing`
+until then.
 
 ### Option B: delete and reinstall
 

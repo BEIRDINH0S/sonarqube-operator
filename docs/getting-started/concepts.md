@@ -183,7 +183,7 @@ A single coarse-grained string for at-a-glance health. For
 | `Pending` | The instance has just been created, child resources are being provisioned. |
 | `Progressing` | Pods are starting, SonarQube has not yet returned `UP` from `/api/system/status`. |
 | `Ready` | SonarQube responds, the admin token is initialized, status is fully populated. |
-| `Degraded` | SonarQube was healthy at some point but is now failing health checks. |
+| `Degraded` | Reserved by the CRD enum; the controller does not currently set it (a previously-Ready instance flips back to `Progressing` if SonarQube becomes unreachable). |
 
 ### `status.conditions[]`
 

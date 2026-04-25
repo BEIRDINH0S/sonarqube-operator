@@ -9,15 +9,23 @@ Reference: [`SonarQubeProject.spec.ciToken`](../reference/crds/sonarqubeproject.
 
 ---
 
-## The three strategies at a glance
+## The two rotation triggers
 
-| Strategy | Trigger | Use case |
-|---|---|---|
-| **Manual delete** | Delete the Secret | Forced rotation after a leak suspicion |
-| **Annotation** | `sonarqube.io/rotate-token=true` | Scripted / on-demand rotation without touching the Secret |
-| **Scheduled** | `spec.ciToken.expiresIn` set | Continuous, hands-off rotation |
+Today the operator implements two rotation paths:
 
-You can mix them — they're not mutually exclusive.
+| Trigger | Use case |
+|---|---|
+| **Delete the Secret** | Forced rotation after a leak suspicion. The next reconcile generates a new token in place of the missing Secret. |
+| **Annotation `sonarqube.io/rotate-token=true`** | Scripted / on-demand rotation. The operator generates a fresh token, updates the Secret in place, revokes the previous SonarQube-side token, and removes the annotation. |
+
+`spec.ciToken.expiresIn`, when set, controls **the token's
+SonarQube-side expiration** but does **not** trigger automatic rotation
+before that expiration. Once the token expires, your pipeline starts
+failing with `401 Unauthorized`, and you (or your operator alerting)
+must trigger one of the two manual paths above to recover. See
+[Strategy 3](#strategy-3-set-expiresin-and-rotate-on-failure-or-on-a-schedule)
+below for how to combine `expiresIn` with a scheduled `kubectl annotate`
+to approximate a managed rotation.
 
 ---
 
@@ -80,9 +88,13 @@ annotation cleanup makes the operation idempotent.
 
 ---
 
-## Strategy 3 — Scheduled rotation with `expiresIn`
+## Strategy 3 — Set `expiresIn` and rotate on failure or on a schedule
 
-For continuous, unattended rotation:
+`expiresIn` sets the SonarQube-side expiration date on the token.
+When that date passes, the token is rejected by SonarQube; the
+operator does **not** pre-rotate. So `expiresIn` alone is not a
+"hands-off" rotation policy — it's a hard cap on the token's lifetime
+that you have to anticipate.
 
 ```yaml
 spec:
@@ -92,24 +104,56 @@ spec:
     expiresIn: 720h        # 30 days
 ```
 
-When `expiresIn` is set, the operator:
+To turn this into managed rotation, pair it with one of:
 
-1. Generates the token with the requested lifetime via SonarQube's
-   token API (sets the token's `expiresAt`).
-2. Records `expiresAt` in its internal status.
-3. On every reconcile, checks the time-to-expiry. If it's below a
-   safety margin (a few minutes), generates a fresh token, updates
-   the Secret in place, and pushes the new `expiresAt`.
+### Option A: scheduled annotation (recommended)
 
-The operator rotates **before** the token expires, so pipelines never
-hit a window where the Secret holds an expired token.
+Add a CronJob that re-applies the `sonarqube.io/rotate-token`
+annotation a few days before the token's expiration. Example, weekly:
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rotate-backend-api-token
+  namespace: sonarqube-prod
+spec:
+  schedule: "0 3 * * 0"   # every Sunday 03:00
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: token-rotator
+          restartPolicy: OnFailure
+          containers:
+            - name: kubectl
+              image: bitnami/kubectl:1.31
+              args:
+                - annotate
+                - sonarqubeproject
+                - backend-api
+                - sonarqube.io/rotate-token=true
+                - --overwrite
+```
+
+The ServiceAccount needs `patch` on `sonarqubeprojects` in the
+namespace. You can use the chart's
+[aggregated `editor` ClusterRole](../reference/helm-values.md#aggregated-user-facing-roles)
+to grant it.
+
+### Option B: alert-driven rotation
+
+Run with `expiresIn`, alert on token-not-far-from-expiry (or on the
+first 401 from your CI), and have your incident runbook include the
+`kubectl annotate ... sonarqube.io/rotate-token=true` step.
+
+### Picking `expiresIn`
 
 | `expiresIn` | Realistic use |
 |---|---|
-| `24h` | Aggressive — short-lived service credentials. |
-| `168h` (7 days) | Weekly rotation, common in regulated environments. |
-| `720h` (30 days) | Monthly rotation, sane balance for most teams. |
-| `8760h` (1 year) | Annual rotation, convenient default. |
+| `168h` (7 days) | Aggressive — pair with weekly Option A above. Common in regulated environments. |
+| `720h` (30 days) | Monthly rotation. The CronJob runs every ~25 days to leave headroom. |
+| `8760h` (1 year) | Annual rotation. Pair with a calendar reminder. |
 | omitted | No expiry — token lasts forever (until manually rotated). |
 
 ---
@@ -180,10 +224,13 @@ A: The operator removes it after a successful rotation. If it's still
 there, the rotation failed — look at `kubectl describe sonarqubeproject`
 for an Event explaining why (most often: SonarQube unreachable).
 
-**Q: `expiresIn` is set but the token never rotates.**
-A: Confirm the operator can reach SonarQube. If yes, look at the
-operator logs for `expiresAt` calculation. The rotation runs on a
-periodic reconcile, not on a precise timer.
+**Q: `expiresIn` is set but the token expired and the pipeline now
+fails.**
+A: Expected behavior — `expiresIn` only sets the SonarQube-side
+expiration, the operator does not pre-rotate. Trigger a manual
+rotation (delete the Secret or set the `sonarqube.io/rotate-token`
+annotation), or wire up [Strategy 3 Option A](#option-a-scheduled-annotation-recommended)
+to schedule it ahead of the deadline.
 
 **Q: Can I disable rotation temporarily?**
 A: Set `spec.ciToken.enabled: false`. The operator removes the Secret

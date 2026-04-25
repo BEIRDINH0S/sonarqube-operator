@@ -112,9 +112,14 @@ allow it). Drift detection runs on this field.
 | **Required** | no |
 | **Default** | `main` |
 
-Name of the project's main branch in SonarQube. Set this to match your
-Git default branch (typically `main` or `master`). Used by SonarQube to
-distinguish the long-lived branch from feature branches in analysis runs.
+!!! warning "Currently a no-op"
+    This field is reserved in the spec for forward-compatibility but the
+    operator does **not** use it today: projects are created with
+    SonarQube's own default branch name and the operator never calls
+    `/api/project_branches/rename`. If your `sonar-scanner` analyses run
+    on a branch named anything other than `main` (or whatever SonarQube
+    default applies), you must rename the main branch manually through
+    the SonarQube UI / API once.
 
 ### `qualityGateRef`
 
@@ -123,18 +128,20 @@ distinguish the long-lived branch from feature branches in analysis runs.
 | **Type** | string |
 | **Required** | no |
 
-Name of a `SonarQubeQualityGate` in the **same namespace** to attach to
-this project. The referenced gate's `spec.instanceRef` should target the
-same instance — the operator does not enforce this, but pointing at a gate
-on a different instance won't work since SonarQube only knows about gates
-on its own server.
+Name of the SonarQube quality gate (the `spec.name` of a
+`SonarQubeQualityGate` resource) to attach to this project.
 
-When omitted, the project uses the SonarQube instance default gate
-(usually `Sonar way`, or whatever `SonarQubeQualityGate` you marked
-`isDefault: true`).
+On every reconcile, the operator unconditionally calls
+`POST /api/qualitygates/select` with this gate name — so a manual UI
+re-assignment to a different gate gets reverted on the next cycle.
 
-Drift detection runs on this assignment — re-attaches the spec gate if a
-SonarQube admin manually changes it.
+When **omitted** or set to the empty string, the operator does **not**
+call select **and does not unassign any previously-set gate either**.
+The project keeps whatever gate was last assigned (which may be the
+SonarQube instance default if it never had an explicit assignment, or
+the last gate the operator set before the field was emptied). To unassign
+a gate explicitly, re-assign the project to a different gate, or do it
+through the SonarQube UI.
 
 ### `ciToken`
 
@@ -157,18 +164,21 @@ kubectl get secret <secretName> -o jsonpath='{.data.token}' | base64 -d
 
 #### Rotation triggers
 
-Three independent rotation paths:
+Two independent rotation paths:
 
 1. **Manual delete** — Delete the Secret. The next reconcile detects it's
-   missing and generates a new token.
+   missing and generates a new token in its place.
 2. **Annotation** — Add `sonarqube.io/rotate-token: "true"` on the
-   `SonarQubeProject`. The operator rotates and removes the annotation.
-3. **Scheduled** — When `expiresIn` is set, the operator records the
-   token's expiration in its status and rotates a few minutes before
-   expiry to avoid pipeline failures.
+   `SonarQubeProject`. The operator generates a fresh token, updates the
+   Secret in place, revokes the previous SonarQube-side token, and
+   removes the annotation.
 
-See the [Token Rotation guide](../../how-to/token-rotation.md) for choosing
-between them.
+`expiresIn`, when set, is passed through to SonarQube as the token's
+expiration date. The operator does **not** proactively re-issue a token
+before expiry — when the SonarQube-side token expires, your pipeline
+will fail with `401 Unauthorized` and you must trigger a rotation
+manually (delete the Secret or set the annotation). See the
+[Token Rotation guide](../../how-to/token-rotation.md) for the workflow.
 
 ---
 
@@ -217,17 +227,16 @@ status:
 
 ### Updates and drift correction
 
-On every reconcile, the operator reads the live SonarQube state and
-compares it to the spec. Mismatches are corrected:
+On every reconcile, the operator reads the live project state via
+`GET /api/projects/search?projects=<key>` and acts as follows:
 
-| Field | Drift correction |
+| Field | Behavior |
 |---|---|
-| `name` | `POST /api/projects/update_visibility` (yes, name update is on the same endpoint in SonarQube 10.x) |
-| `visibility` | `POST /api/projects/update_visibility` |
-| `qualityGateRef` | `POST /api/qualitygates/select` |
-| `mainBranch` | `POST /api/project_branches/rename` |
-
-`key` is immutable — corrections never apply.
+| `visibility` | If the live value differs from the spec, the operator calls `POST /api/projects/update_visibility`. True drift correction. |
+| `qualityGateRef` | Unconditionally re-asserted via `POST /api/qualitygates/select` on every reconcile when the field is non-empty. Effectively drift-correcting, but the operator does not read the live assignment first — it just re-pins the spec value. |
+| `name` | **Not corrected.** The operator does not call `update` for the display name. A UI rename will not be reverted. |
+| `mainBranch` | **Not used.** See the warning under [`mainBranch`](#mainbranch). |
+| `key` | Immutable per CEL XValidation; the API rejects updates. |
 
 ### Deletion
 
@@ -301,8 +310,11 @@ spec:
     expiresIn: 720h   # rotate every 30 days
 ```
 
-The operator records the token's `expiresAt` in its status and rotates
-a few minutes before that timestamp on the next reconcile.
+SonarQube enforces the expiration on its side. The operator does **not**
+auto-rotate before that date — pair this with a scheduled
+`kubectl annotate ... sonarqube.io/rotate-token=true` (CronJob, GitOps
+post-sync hook, etc.) to refresh the token before pipelines start
+failing. See the [Token Rotation guide](../../how-to/token-rotation.md).
 
 ---
 

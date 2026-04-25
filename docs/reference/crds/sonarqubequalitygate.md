@@ -188,22 +188,28 @@ status:
 1. `POST /api/qualitygates/create` with the spec name.
 2. For each condition in `spec.conditions`, `POST /api/qualitygates/create_condition`.
 3. If `isDefault: true`, `POST /api/qualitygates/set_as_default`.
-4. The internal gate ID is stored in `status.gateId` for fast lookups.
+4. The internal gate ID is stored in `status.gateId` for reference (lookups
+   themselves use the gate name, not the ID).
 
 ### Drift correction
 
 Every reconcile reads the live conditions via
-`GET /api/qualitygates/show?id=<gateId>` and computes the diff against
-`spec.conditions`:
+`GET /api/qualitygates/show?name=<spec.name>` and computes the diff
+against `spec.conditions`. Each condition is identified by the triplet
+`(metric, operator, value)`:
 
-- **Conditions in spec but missing from SonarQube** → created.
-- **Conditions in SonarQube but missing from spec** → deleted.
-- **Conditions present on both with different operator or value** →
-  updated in place.
+- **Conditions in spec but not in the live set** → created via
+  `POST /api/qualitygates/create_condition`.
+- **Conditions in the live set but not in the spec** → deleted via
+  `POST /api/qualitygates/delete_condition`.
+- **Changing a threshold** (e.g. `value` from `80` to `85`) is treated
+  as deleting the old triplet and adding the new one — there is no
+  in-place update. Functionally equivalent, but worth knowing if you
+  parse the SonarQube audit log.
 
-If `isDefault: true` is set and the gate is no longer the default
-(perhaps another gate was set as default through the UI), the operator
-re-promotes it.
+If `isDefault: true` is set, the operator unconditionally calls
+`POST /api/qualitygates/set_as_default` on every reconcile, so a UI
+demotion gets reverted on the next cycle.
 
 ### Deletion
 
