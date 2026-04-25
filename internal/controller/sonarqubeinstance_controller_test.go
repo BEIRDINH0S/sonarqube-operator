@@ -133,6 +133,12 @@ type mockSonarClient struct {
 	removeUserGlobalPermCalls int
 	addedGlobalPerms          []string // "login:permission"
 	removedGlobalPerms        []string
+	// permission templates
+	createPermissionTemplateResult string
+	findPermissionTemplateResult   *sonarqube.PermissionTemplate
+	createPermissionTemplateCalls  int
+	deletePermissionTemplateCalls  int
+	setDefaultTemplateCalls        int
 }
 
 func (m *mockSonarClient) GetStatus(_ context.Context) (string, string, error) {
@@ -348,6 +354,28 @@ func (m *mockSonarClient) AddUserGlobalPermission(_ context.Context, login, perm
 func (m *mockSonarClient) RemoveUserGlobalPermission(_ context.Context, login, permission string) error {
 	m.removeUserGlobalPermCalls++
 	m.removedGlobalPerms = append(m.removedGlobalPerms, login+":"+permission)
+	return nil
+}
+func (m *mockSonarClient) CreatePermissionTemplate(_ context.Context, _, _, _ string) (string, error) {
+	m.createPermissionTemplateCalls++
+	id := m.createPermissionTemplateResult
+	if id == "" {
+		id = "tpl-uuid"
+	}
+	return id, nil
+}
+func (m *mockSonarClient) FindPermissionTemplate(_ context.Context, _ string) (*sonarqube.PermissionTemplate, error) {
+	if m.findPermissionTemplateResult == nil {
+		return nil, sonarqube.ErrNotFound
+	}
+	return m.findPermissionTemplateResult, nil
+}
+func (m *mockSonarClient) DeletePermissionTemplate(_ context.Context, _ string) error {
+	m.deletePermissionTemplateCalls++
+	return nil
+}
+func (m *mockSonarClient) SetDefaultPermissionTemplate(_ context.Context, _ string) error {
+	m.setDefaultTemplateCalls++
 	return nil
 }
 
