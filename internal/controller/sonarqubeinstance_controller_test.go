@@ -358,6 +358,54 @@ var _ = Describe("buildStatefulSet", func() {
 		Expect(sts.Spec.Template.Spec.InitContainers).To(BeEmpty())
 	})
 
+	It("plumbe nodeSelector / tolerations / affinity sur le PodSpec", func() {
+		instance := newTestInstance("test")
+		instance.Spec.NodeSelector = map[string]string{"workload": "ci"}
+		instance.Spec.Tolerations = []corev1.Toleration{{Key: "dedicated", Operator: corev1.TolerationOpEqual, Value: "ci"}}
+		instance.Spec.Affinity = &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{}}
+
+		sts, err := r.buildStatefulSet(instance)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sts.Spec.Template.Spec.NodeSelector).To(Equal(instance.Spec.NodeSelector))
+		Expect(sts.Spec.Template.Spec.Tolerations).To(Equal(instance.Spec.Tolerations))
+		Expect(sts.Spec.Template.Spec.Affinity).To(Equal(instance.Spec.Affinity))
+	})
+
+	It("préserve le fsGroup par défaut quand un podSecurityContext custom n'en spécifie pas", func() {
+		instance := newTestInstance("test")
+		runAsNonRoot := true
+		instance.Spec.PodSecurityContext = &corev1.PodSecurityContext{RunAsNonRoot: &runAsNonRoot}
+
+		sts, err := r.buildStatefulSet(instance)
+		Expect(err).NotTo(HaveOccurred())
+		psc := sts.Spec.Template.Spec.SecurityContext
+		Expect(psc).NotTo(BeNil())
+		Expect(*psc.RunAsNonRoot).To(BeTrue())
+		Expect(psc.FSGroup).NotTo(BeNil())
+		Expect(*psc.FSGroup).To(Equal(int64(1000)))
+	})
+
+	It("respecte un fsGroup explicite dans podSecurityContext", func() {
+		instance := newTestInstance("test")
+		fsGroup := int64(2000)
+		instance.Spec.PodSecurityContext = &corev1.PodSecurityContext{FSGroup: &fsGroup}
+
+		sts, err := r.buildStatefulSet(instance)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(*sts.Spec.Template.Spec.SecurityContext.FSGroup).To(Equal(int64(2000)))
+	})
+
+	It("plumbe le securityContext sur le container sonarqube", func() {
+		instance := newTestInstance("test")
+		readOnly := true
+		instance.Spec.SecurityContext = &corev1.SecurityContext{ReadOnlyRootFilesystem: &readOnly}
+
+		sts, err := r.buildStatefulSet(instance)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sts.Spec.Template.Spec.Containers[0].SecurityContext).NotTo(BeNil())
+		Expect(*sts.Spec.Template.Spec.Containers[0].SecurityContext.ReadOnlyRootFilesystem).To(BeTrue())
+	})
+
 	It("retourne une erreur si persistence.size est invalide", func() {
 		instance := newTestInstance("test")
 		instance.Spec.Persistence.Size = "10 Go"
