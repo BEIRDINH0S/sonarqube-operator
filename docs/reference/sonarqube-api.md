@@ -63,19 +63,20 @@ The operator uses `gateName` everywhere.
 `conditionID` parameter for `delete_condition` is therefore a string —
 already correct in the client.
 
-### Plugin install requires `risk_consent`
+### Plugin install requires `acknowledge_risk_consent`
 
 SonarQube 10.x requires admin consent for marketplace plugins before
 any plugin install will succeed:
 
 ```
-POST /api/plugins/risk_consent
+POST /api/plugins/acknowledge_risk_consent
 ```
 
-Without this call, `POST /api/plugins/install` returns an error even
-with a valid admin token. **This is currently not handled by the
-operator** — see the open item under
-[Phase 8.5 in the roadmap](https://github.com/BEIRDINH0S/sonarqube-operator/blob/main/ROADMAP.md).
+Without this call, `POST /api/plugins/install` returns
+`Can't install plugin without accepting firstly plugins risk consent`
+even with a valid admin token. The plugin controller detects this
+specific error, calls the consent endpoint, and retries the install
+once — declaring a `SonarQubePlugin` CR is itself the explicit opt-in.
 
 ---
 

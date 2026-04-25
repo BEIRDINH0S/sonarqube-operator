@@ -102,6 +102,9 @@ type Client interface {
 	ListInstalledPlugins(ctx context.Context) ([]Plugin, error)
 	InstallPlugin(ctx context.Context, key, version string) error
 	UninstallPlugin(ctx context.Context, key string) error
+	// AcknowledgeRiskConsent accepts the marketplace plugins risk consent.
+	// Required once on SonarQube 10.x before any /api/plugins/install call succeeds.
+	AcknowledgeRiskConsent(ctx context.Context) error
 
 	// Projets
 	CreateProject(ctx context.Context, key, name, visibility string) error
@@ -374,6 +377,21 @@ func (c *httpClient) InstallPlugin(ctx context.Context, key, version string) err
 func (c *httpClient) UninstallPlugin(ctx context.Context, key string) error {
 	_, err := c.do(ctx, http.MethodPost, "/api/plugins/uninstall", url.Values{"key": {key}})
 	return err
+}
+
+func (c *httpClient) AcknowledgeRiskConsent(ctx context.Context) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/plugins/acknowledge_risk_consent", url.Values{})
+	return err
+}
+
+// IsRiskConsentRequired returns true when SonarQube refused a plugin install because
+// the marketplace risk consent has not been acknowledged yet. The error message comes
+// from SonarQube as a JSON body, so we match on its text rather than on a status code.
+func IsRiskConsentRequired(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "risk consent")
 }
 
 // --- Projets ---

@@ -118,6 +118,39 @@ func TestUninstallPlugin(t *testing.T) {
 	assert.Equal(t, "sonar-java", receivedKey)
 }
 
+func TestAcknowledgeRiskConsent(t *testing.T) {
+	var called int
+	client := newTestServer(t, map[string]http.HandlerFunc{
+		"/api/plugins/acknowledge_risk_consent": func(w http.ResponseWriter, r *http.Request) {
+			called++
+			assert.Equal(t, http.MethodPost, r.Method)
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+
+	err := client.AcknowledgeRiskConsent(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, called)
+}
+
+func TestIsRiskConsentRequired(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"unrelated", errors.New("HTTP 500: boom"), false},
+		{"sonarqube message", errors.New("Can't install plugin without accepting firstly plugins risk consent"), true},
+		{"case-insensitive", errors.New("Risk Consent missing"), true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, sonarqube.IsRiskConsentRequired(tc.err))
+		})
+	}
+}
+
 func TestCreateProject(t *testing.T) {
 	var receivedKey, receivedName, receivedVisibility string
 	client := newTestServer(t, map[string]http.HandlerFunc{

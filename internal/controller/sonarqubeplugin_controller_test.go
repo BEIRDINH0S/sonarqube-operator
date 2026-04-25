@@ -174,6 +174,33 @@ var _ = Describe("SonarQubePlugin Controller", func() {
 		Expect(updated.Status.RestartRequired).To(BeFalse())
 	})
 
+	It("acquitte le risk consent et réessaie l'install si SonarQube le refuse", func() {
+		instanceName := "instance-consent"
+		pluginName := "plugin-consent"
+		nn := types.NamespacedName{Name: pluginName, Namespace: "default"}
+		defer deletePlugin(pluginName)
+		defer deleteInstance(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		Expect(k8sClient.Create(ctx, newTestPlugin(pluginName, instanceName, "7.30.1"))).To(Succeed())
+
+		// 1er appel à InstallPlugin → erreur "risk consent"
+		// AcknowledgeRiskConsent → ok
+		// 2e appel à InstallPlugin → ok
+		mock := &mockSonarClient{
+			installPluginConsentErrUntilAttempt: 1,
+		}
+		_, err := newPluginReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(mock.acknowledgeRiskConsentCalls).To(Equal(1))
+		Expect(mock.installPluginCalls).To(Equal(2))
+
+		updated := &sonarqubev1alpha1.SonarQubePlugin{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal("Installed"))
+	})
+
 	It("réinstalle si la version est mauvaise", func() {
 		instanceName := "instance-upgrade"
 		pluginName := "plugin-upgrade"
