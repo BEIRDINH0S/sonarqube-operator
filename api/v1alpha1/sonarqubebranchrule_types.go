@@ -56,7 +56,7 @@ type SonarQubeBranchRuleSpec struct {
 }
 
 // NewCodePeriodSpec describes a SonarQube new-code-period reference.
-// +kubebuilder:validation:XValidation:rule="self.mode == 'previous_version' || (has(self.value) && self.value != '')",message="spec.newCodePeriod.value is required unless mode is previous_version"
+// +kubebuilder:validation:XValidation:rule="self.mode == 'previous_version' || (has(self.value) && size(self.value) > 0)",message="spec.newCodePeriod.value is required unless mode is previous_version"
 type NewCodePeriodSpec struct {
 	// mode is the new-code-period mode.
 	// +kubebuilder:validation:Enum=previous_version;days;date;reference_branch

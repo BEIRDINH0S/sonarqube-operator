@@ -104,8 +104,8 @@ spec:
                 type: object
                 x-kubernetes-validations:
                 - message: spec.newCodePeriod.value is required unless mode is previous_version
-                  rule: self.mode == 'previous_version' || (has(self.value) && self.value
-                    != '')
+                  rule: self.mode == 'previous_version' || (has(self.value) && size(self.value)
+                    > 0)
               projectKey:
                 description: |-
                   projectKey is the SonarQube project key the rule applies to. Should match

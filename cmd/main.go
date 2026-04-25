@@ -232,26 +232,26 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "SonarQubeUser")
 		os.Exit(1)
 	}
-<<<<<<< HEAD
 	if err := (&controller.SonarQubeBackupReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("sonarqubebackup-controller"), //nolint:staticcheck
-=======
-	if err := (&controller.SonarQubeBranchRuleReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("sonarqubebranchrule-controller"), //nolint:staticcheck
->>>>>>> daa003c (feat: scaffold SonarQubeBranchRule CRD)
 		NewSonarClient: func(baseURL, token string) sonarqube.Client {
 			return sonarqube.NewClient(baseURL, token)
 		},
 	}).SetupWithManager(mgr); err != nil {
-<<<<<<< HEAD
 		setupLog.Error(err, "Failed to create controller", "controller", "SonarQubeBackup")
-=======
+		os.Exit(1)
+	}
+	if err := (&controller.SonarQubeBranchRuleReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("sonarqubebranchrule-controller"), //nolint:staticcheck
+		NewSonarClient: func(baseURL, token string) sonarqube.Client {
+			return sonarqube.NewClient(baseURL, token)
+		},
+	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "SonarQubeBranchRule")
->>>>>>> daa003c (feat: scaffold SonarQubeBranchRule CRD)
 		os.Exit(1)
 	}
 	if enableWebhook {
