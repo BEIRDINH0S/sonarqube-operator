@@ -192,6 +192,13 @@ func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, proje
 		}
 	}
 
+	// Reconcile main branch if specified.
+	if project.Spec.MainBranch != "" {
+		if err := r.reconcileMainBranch(ctx, project, sonarClient); err != nil {
+			return err
+		}
+	}
+
 	// Associer le Quality Gate si défini
 	if project.Spec.QualityGateRef != "" {
 		if err := sonarClient.AssignQualityGate(ctx, project.Spec.Key, project.Spec.QualityGateRef); err != nil {
@@ -216,6 +223,34 @@ func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, proje
 		ObservedGeneration: project.Generation,
 	})
 	return r.Status().Update(ctx, project)
+}
+
+// reconcileMainBranch fetches the current main branch from SonarQube and renames it
+// if it doesn't match spec.mainBranch. Errors are non-fatal: a warning event is emitted
+// and reconciliation continues so the project doesn't get stuck in Failed.
+func (r *SonarQubeProjectReconciler) reconcileMainBranch(ctx context.Context, project *sonarqubev1alpha1.SonarQubeProject, sonarClient sonarqube.Client) error {
+	log := logf.FromContext(ctx)
+
+	current, err := sonarClient.GetProjectMainBranch(ctx, project.Spec.Key)
+	if err != nil {
+		r.Recorder.Event(project, corev1.EventTypeWarning, "MainBranchFetchFailed", err.Error())
+		log.Info("Could not fetch main branch, skipping rename", "error", err.Error())
+		return nil
+	}
+
+	if current == project.Spec.MainBranch {
+		return nil
+	}
+
+	if err := sonarClient.RenameMainBranch(ctx, project.Spec.Key, project.Spec.MainBranch); err != nil {
+		r.Recorder.Event(project, corev1.EventTypeWarning, "MainBranchRenameFailed", err.Error())
+		log.Info("Could not rename main branch", "from", current, "to", project.Spec.MainBranch, "error", err.Error())
+		return nil
+	}
+
+	r.Recorder.Event(project, corev1.EventTypeNormal, "MainBranchRenamed",
+		fmt.Sprintf("Main branch renamed from %q to %q", current, project.Spec.MainBranch))
+	return nil
 }
 
 // reconcileCIToken ensures the CI token Secret is present and up to date.
