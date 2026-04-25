@@ -206,6 +206,15 @@ func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, proje
 		}
 	}
 
+	// Tags + links — best-effort (non-fatal): a transient SonarQube error here
+	// shouldn't tip the project into Failed when the rest of the spec reconciled.
+	if err := sonarClient.SetProjectTags(ctx, project.Spec.Key, project.Spec.Tags); err != nil {
+		r.Recorder.Event(project, corev1.EventTypeWarning, "TagsUpdateFailed", err.Error())
+	}
+	if err := r.reconcileProjectLinks(ctx, project, sonarClient); err != nil {
+		r.Recorder.Event(project, corev1.EventTypeWarning, "LinksUpdateFailed", err.Error())
+	}
+
 	// Gérer le token CI
 	if project.Spec.CIToken.Enabled {
 		if err := r.reconcileCIToken(ctx, project, instance, sonarClient); err != nil {
@@ -223,6 +232,55 @@ func (r *SonarQubeProjectReconciler) reconcileProject(ctx context.Context, proje
 		ObservedGeneration: project.Generation,
 	})
 	return r.Status().Update(ctx, project)
+}
+
+// reconcileProjectLinks ensures spec.links matches the operator-managed links in
+// SonarQube. Operator ownership is tracked in status.managedLinkNames so that
+// links created via the UI are not removed.
+func (r *SonarQubeProjectReconciler) reconcileProjectLinks(ctx context.Context, project *sonarqubev1alpha1.SonarQubeProject, sonarClient sonarqube.Client) error {
+	current, err := sonarClient.ListProjectLinks(ctx, project.Spec.Key)
+	if err != nil {
+		return fmt.Errorf("listing project links: %w", err)
+	}
+
+	currentByName := make(map[string]sonarqube.ProjectLink, len(current))
+	for _, l := range current {
+		currentByName[l.Name] = l
+	}
+
+	desiredNames := make(map[string]bool, len(project.Spec.Links))
+	for _, l := range project.Spec.Links {
+		desiredNames[l.Name] = true
+	}
+
+	// Delete links the operator previously created that are no longer in spec.
+	for _, name := range project.Status.ManagedLinkNames {
+		if desiredNames[name] {
+			continue
+		}
+		if existing, ok := currentByName[name]; ok {
+			if err := sonarClient.DeleteProjectLink(ctx, existing.ID); err != nil {
+				return fmt.Errorf("deleting link %q: %w", name, err)
+			}
+		}
+	}
+
+	// Create links that don't exist yet.
+	for _, l := range project.Spec.Links {
+		if _, ok := currentByName[l.Name]; ok {
+			continue
+		}
+		if _, err := sonarClient.CreateProjectLink(ctx, project.Spec.Key, l.Name, l.URL); err != nil {
+			return fmt.Errorf("creating link %q: %w", l.Name, err)
+		}
+	}
+
+	managed := make([]string, 0, len(project.Spec.Links))
+	for _, l := range project.Spec.Links {
+		managed = append(managed, l.Name)
+	}
+	project.Status.ManagedLinkNames = managed
+	return nil
 }
 
 // reconcileMainBranch fetches the current main branch from SonarQube and renames it

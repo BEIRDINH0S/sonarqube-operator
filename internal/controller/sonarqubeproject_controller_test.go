@@ -491,4 +491,93 @@ var _ = Describe("SonarQubeProject Controller", func() {
 		err = k8sClient.Get(ctx, nn, &sonarqubev1alpha1.SonarQubeProject{})
 		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "project should be garbage-collected once the finalizer is removed")
 	})
+
+	It("propage les tags via SetProjectTags", func() {
+		instanceName := "proj-instance-tags"
+		projectName := "proj-tags"
+		nn := types.NamespacedName{Name: projectName, Namespace: "default"}
+		defer deleteProject(projectName)
+		defer deleteInstanceIfExists(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		p := newTestProject(projectName, instanceName, "proj-tags-key")
+		p.Spec.Tags = []string{"team-a", "go", "backend"}
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+
+		mock := &mockSonarClient{
+			getProjectResult: &sonarqube.Project{Key: "proj-tags-key", Visibility: "private"},
+		}
+		_, err := newProjectReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(mock.setProjectTagsCalls).To(Equal(1))
+		Expect(mock.lastSetProjectTags).To(Equal([]string{"team-a", "go", "backend"}))
+	})
+
+	It("crée les links manquants et garde les links UI", func() {
+		instanceName := "proj-instance-links-create"
+		projectName := "proj-links-create"
+		nn := types.NamespacedName{Name: projectName, Namespace: "default"}
+		defer deleteProject(projectName)
+		defer deleteInstanceIfExists(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		p := newTestProject(projectName, instanceName, "proj-links-key")
+		p.Spec.Links = []sonarqubev1alpha1.ProjectLink{
+			{Name: "ci", URL: "https://ci.example.com/proj"},
+			{Name: "issue tracker", URL: "https://issues.example.com/proj"},
+		}
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+
+		// SonarQube already has a UI-created link "wiki" not in spec — must NOT be deleted.
+		mock := &mockSonarClient{
+			getProjectResult: &sonarqube.Project{Key: "proj-links-key", Visibility: "private"},
+			listProjectLinksResult: []sonarqube.ProjectLink{
+				{ID: "ui-1", Name: "wiki", URL: "https://wiki.example.com/proj"},
+			},
+		}
+		_, err := newProjectReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(mock.createProjectLinkCalls).To(Equal(2))
+		Expect(mock.deleteProjectLinkCalls).To(Equal(0))
+
+		updated := &sonarqubev1alpha1.SonarQubeProject{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		Expect(updated.Status.ManagedLinkNames).To(ConsistOf("ci", "issue tracker"))
+	})
+
+	It("supprime un link retiré du spec quand il était managé par l'opérateur", func() {
+		instanceName := "proj-instance-links-delete"
+		projectName := "proj-links-delete"
+		nn := types.NamespacedName{Name: projectName, Namespace: "default"}
+		defer deleteProject(projectName)
+		defer deleteInstanceIfExists(instanceName)
+
+		newReadyInstance(ctx, instanceName)
+		p := newTestProject(projectName, instanceName, "proj-links-del-key")
+		p.Spec.Links = []sonarqubev1alpha1.ProjectLink{
+			{Name: "ci", URL: "https://ci.example.com/proj"},
+		}
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+
+		// Status says we previously managed both "ci" and "old-link"
+		updated := &sonarqubev1alpha1.SonarQubeProject{}
+		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
+		updated.Status.ManagedLinkNames = []string{"ci", "old-link"}
+		Expect(k8sClient.Status().Update(ctx, updated)).To(Succeed())
+
+		mock := &mockSonarClient{
+			getProjectResult: &sonarqube.Project{Key: "proj-links-del-key", Visibility: "private"},
+			listProjectLinksResult: []sonarqube.ProjectLink{
+				{ID: "sq-1", Name: "ci", URL: "https://ci.example.com/proj"},
+				{ID: "sq-2", Name: "old-link", URL: "https://old.example.com"},
+			},
+		}
+		_, err := newProjectReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(mock.deleteProjectLinkCalls).To(Equal(1))
+		Expect(mock.deletedProjectLinkIDs).To(Equal([]string{"sq-2"}))
+	})
 })

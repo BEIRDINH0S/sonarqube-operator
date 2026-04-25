@@ -68,6 +68,14 @@ type mockSonarClient struct {
 	getProjectMainBranchErr    error
 	renameMainBranchCalls      int
 	lastRenamedMainBranch      string
+	// project tags + links
+	setProjectTagsCalls    int
+	lastSetProjectTags     []string
+	listProjectLinksResult []sonarqube.ProjectLink
+	createProjectLinkCalls int
+	createdProjectLinks    []sonarqube.ProjectLink
+	deleteProjectLinkCalls int
+	deletedProjectLinkIDs  []string
 	// auth
 	validateAuthErr error
 	// quality gate
@@ -142,6 +150,24 @@ func (m *mockSonarClient) GetProjectMainBranch(_ context.Context, _ string) (str
 func (m *mockSonarClient) RenameMainBranch(_ context.Context, _, branchName string) error {
 	m.renameMainBranchCalls++
 	m.lastRenamedMainBranch = branchName
+	return nil
+}
+func (m *mockSonarClient) SetProjectTags(_ context.Context, _ string, tags []string) error {
+	m.setProjectTagsCalls++
+	m.lastSetProjectTags = tags
+	return nil
+}
+func (m *mockSonarClient) ListProjectLinks(_ context.Context, _ string) ([]sonarqube.ProjectLink, error) {
+	return m.listProjectLinksResult, nil
+}
+func (m *mockSonarClient) CreateProjectLink(_ context.Context, _, name, linkURL string) (string, error) {
+	m.createProjectLinkCalls++
+	m.createdProjectLinks = append(m.createdProjectLinks, sonarqube.ProjectLink{Name: name, URL: linkURL})
+	return fmt.Sprintf("link-%d", m.createProjectLinkCalls), nil
+}
+func (m *mockSonarClient) DeleteProjectLink(_ context.Context, linkID string) error {
+	m.deleteProjectLinkCalls++
+	m.deletedProjectLinkIDs = append(m.deletedProjectLinkIDs, linkID)
 	return nil
 }
 func (m *mockSonarClient) ListQualityGates(_ context.Context) ([]sonarqube.QualityGate, error) {
