@@ -84,6 +84,32 @@ type SonarQubeInstanceSpec struct {
 	// Has no effect on the privileged sysctl init container — disable that with skipSysctlInit.
 	// +optional
 	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
+
+	// monitoring controls a managed Prometheus ServiceMonitor for the operator metrics
+	// endpoint. Soft dependency on monitoring.coreos.com/v1: if the CRD is not installed
+	// in the cluster, the operator emits a Degraded condition rather than crashing.
+	// +optional
+	Monitoring MonitoringSpec `json:"monitoring,omitempty"`
+}
+
+// MonitoringSpec configures Prometheus scraping integration.
+type MonitoringSpec struct {
+	// enabled creates a ServiceMonitor pointing at the operator metrics endpoint
+	// when set to true.
+	// +optional
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled,omitempty"`
+
+	// scrapeInterval (e.g. "30s"). Defaults to Prometheus Operator's global setting
+	// when empty.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[0-9]+(ms|s|m|h)$`
+	ScrapeInterval string `json:"scrapeInterval,omitempty"`
+
+	// labels is added to the ServiceMonitor metadata, used by Prometheus Operator's
+	// `serviceMonitorSelector` to match.
+	// +optional
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // DatabaseSpec holds the PostgreSQL connection configuration.

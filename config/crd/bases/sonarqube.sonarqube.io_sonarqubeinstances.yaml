@@ -1024,6 +1024,32 @@ spec:
                 description: jvmOptions are extra JVM flags passed to SonarQube (e.g.
                   "-Xmx2g -Xms1g").
                 type: string
+              monitoring:
+                description: |-
+                  monitoring controls a managed Prometheus ServiceMonitor for the operator metrics
+                  endpoint. Soft dependency on monitoring.coreos.com/v1: if the CRD is not installed
+                  in the cluster, the operator emits a Degraded condition rather than crashing.
+                properties:
+                  enabled:
+                    default: false
+                    description: |-
+                      enabled creates a ServiceMonitor pointing at the operator metrics endpoint
+                      when set to true.
+                    type: boolean
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      labels is added to the ServiceMonitor metadata, used by Prometheus Operator's
+                      `serviceMonitorSelector` to match.
+                    type: object
+                  scrapeInterval:
+                    description: |-
+                      scrapeInterval (e.g. "30s"). Defaults to Prometheus Operator's global setting
+                      when empty.
+                    pattern: ^[0-9]+(ms|s|m|h)$
+                    type: string
+                type: object
               nodeSelector:
                 additionalProperties:
                   type: string
