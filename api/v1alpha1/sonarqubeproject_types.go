@@ -67,6 +67,14 @@ type SonarQubeProjectSpec struct {
 	// name was previously managed by the operator.
 	// +optional
 	Links []ProjectLink `json:"links,omitempty"`
+
+	// settings is a key/value map of project-scoped sonar.* properties to apply.
+	// Keys are propagated to /api/settings/set; entries removed from this map
+	// (but previously managed by the operator) are reset via /api/settings/reset.
+	// Reserved auth keys (sonar.auth.*) are rejected at admission.
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="self.all(k, !k.startsWith('sonar.auth.'))",message="sonar.auth.* keys are reserved and cannot be managed via SonarQubeProject"
+	Settings map[string]string `json:"settings,omitempty"`
 }
 
 // ProjectLink is a named URL surfaced on a project's overview page.
@@ -120,6 +128,12 @@ type SonarQubeProjectStatus struct {
 	// created directly via the UI are not in this list and stay untouched.
 	// +optional
 	ManagedLinkNames []string `json:"managedLinkNames,omitempty"`
+
+	// managedSettings tracks the setting keys the operator currently owns on
+	// the project. Keys removed from spec.settings but still in this list are
+	// reset on the next reconcile.
+	// +optional
+	ManagedSettings []string `json:"managedSettings,omitempty"`
 
 	// +listType=map
 	// +listMapKey=type

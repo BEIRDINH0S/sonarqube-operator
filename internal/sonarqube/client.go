@@ -131,6 +131,10 @@ type Client interface {
 	CreateProjectLink(ctx context.Context, projectKey, name, linkURL string) (string, error)
 	// DeleteProjectLink removes a link by its SonarQube-assigned ID.
 	DeleteProjectLink(ctx context.Context, linkID string) error
+	// SetSetting writes a single project-scoped setting via /api/settings/set.
+	SetSetting(ctx context.Context, projectKey, key, value string) error
+	// ResetSettings clears project-scoped settings via /api/settings/reset.
+	ResetSettings(ctx context.Context, projectKey string, keys []string) error
 
 	// Quality Gates
 	ListQualityGates(ctx context.Context) ([]QualityGate, error)
@@ -543,6 +547,26 @@ func (c *httpClient) RenameMainBranch(ctx context.Context, projectKey, branchNam
 	_, err := c.do(ctx, http.MethodPost, "/api/project_branches/rename", url.Values{
 		"project": {projectKey},
 		"name":    {branchName},
+	})
+	return err
+}
+
+func (c *httpClient) SetSetting(ctx context.Context, projectKey, key, value string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/settings/set", url.Values{
+		"component": {projectKey},
+		"key":       {key},
+		"value":     {value},
+	})
+	return err
+}
+
+func (c *httpClient) ResetSettings(ctx context.Context, projectKey string, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	_, err := c.do(ctx, http.MethodPost, "/api/settings/reset", url.Values{
+		"component": {projectKey},
+		"keys":      {strings.Join(keys, ",")},
 	})
 	return err
 }

@@ -131,6 +131,19 @@ spec:
                 description: qualityGateRef est le nom du SonarQubeQualityGate à associer
                   au projet.
                 type: string
+              settings:
+                additionalProperties:
+                  type: string
+                description: |-
+                  settings is a key/value map of project-scoped sonar.* properties to apply.
+                  Keys are propagated to /api/settings/set; entries removed from this map
+                  (but previously managed by the operator) are reset via /api/settings/reset.
+                  Reserved auth keys (sonar.auth.*) are rejected at admission.
+                type: object
+                x-kubernetes-validations:
+                - message: sonar.auth.* keys are reserved and cannot be managed via
+                    SonarQubeProject
+                  rule: self.all(k, !k.startsWith('sonar.auth.'))
               tags:
                 description: |-
                   tags is the full set of tags to apply to the project. Reconciled with set
@@ -218,6 +231,14 @@ spec:
                   managedLinkNames tracks the names of project links the operator created.
                   Used to decide which links to remove when they leave spec.links — links
                   created directly via the UI are not in this list and stay untouched.
+                items:
+                  type: string
+                type: array
+              managedSettings:
+                description: |-
+                  managedSettings tracks the setting keys the operator currently owns on
+                  the project. Keys removed from spec.settings but still in this list are
+                  reset on the next reconcile.
                 items:
                   type: string
                 type: array

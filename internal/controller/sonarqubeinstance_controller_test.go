@@ -76,6 +76,11 @@ type mockSonarClient struct {
 	createdProjectLinks    []sonarqube.ProjectLink
 	deleteProjectLinkCalls int
 	deletedProjectLinkIDs  []string
+	// project settings
+	setSettingCalls   int
+	setSettings       map[string]string
+	resetSettingCalls int
+	resetSettingsKeys []string
 	// auth
 	validateAuthErr error
 	// quality gate
@@ -170,6 +175,19 @@ func (m *mockSonarClient) CreateProjectLink(_ context.Context, _, name, linkURL 
 func (m *mockSonarClient) DeleteProjectLink(_ context.Context, linkID string) error {
 	m.deleteProjectLinkCalls++
 	m.deletedProjectLinkIDs = append(m.deletedProjectLinkIDs, linkID)
+	return nil
+}
+func (m *mockSonarClient) SetSetting(_ context.Context, _, key, value string) error {
+	m.setSettingCalls++
+	if m.setSettings == nil {
+		m.setSettings = map[string]string{}
+	}
+	m.setSettings[key] = value
+	return nil
+}
+func (m *mockSonarClient) ResetSettings(_ context.Context, _ string, keys []string) error {
+	m.resetSettingCalls++
+	m.resetSettingsKeys = append(m.resetSettingsKeys, keys...)
 	return nil
 }
 func (m *mockSonarClient) ListQualityGates(_ context.Context) ([]sonarqube.QualityGate, error) {
