@@ -107,7 +107,8 @@ spec:
             type: object
             x-kubernetes-validations:
             - message: spec.version and spec.source are mutually exclusive
-              rule: '!(has(self.source) && has(self.version) && self.version != '''')'
+              rule: '!(has(self.source) && has(self.version) && size(self.version)
+                > 0)'
           status:
             description: status defines the observed state of SonarQubePlugin
             properties:

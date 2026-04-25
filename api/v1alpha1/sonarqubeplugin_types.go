@@ -24,7 +24,7 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // SonarQubePluginSpec defines the desired state of SonarQubePlugin
-// +kubebuilder:validation:XValidation:rule="!(has(self.source) && has(self.version) && self.version != '')",message="spec.version and spec.source are mutually exclusive"
+// +kubebuilder:validation:XValidation:rule="!(has(self.source) && has(self.version) && size(self.version) > 0)",message="spec.version and spec.source are mutually exclusive"
 type SonarQubePluginSpec struct {
 	// instanceRef référence la SonarQubeInstance sur laquelle installer le plugin.
 	// +kubebuilder:validation:Required
