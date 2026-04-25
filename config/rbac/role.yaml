@@ -73,6 +73,7 @@ rules:
   - sonarqubeprojects
   - sonarqubequalitygates
   - sonarqubeusers
+  - sonarqubewebhooks
   verbs:
   - create
   - delete
@@ -93,6 +94,7 @@ rules:
   - sonarqubeprojects/finalizers
   - sonarqubequalitygates/finalizers
   - sonarqubeusers/finalizers
+  - sonarqubewebhooks/finalizers
   verbs:
   - update
 - apiGroups:
@@ -107,6 +109,7 @@ rules:
   - sonarqubeprojects/status
   - sonarqubequalitygates/status
   - sonarqubeusers/status
+  - sonarqubewebhooks/status
   verbs:
   - get
   - patch

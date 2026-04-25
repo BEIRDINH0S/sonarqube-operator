@@ -139,6 +139,10 @@ type mockSonarClient struct {
 	createPermissionTemplateCalls  int
 	deletePermissionTemplateCalls  int
 	setDefaultTemplateCalls        int
+	// webhooks
+	createWebhookKey   string
+	createWebhookCalls int
+	deleteWebhookCalls int
 }
 
 func (m *mockSonarClient) GetStatus(_ context.Context) (string, string, error) {
@@ -376,6 +380,17 @@ func (m *mockSonarClient) DeletePermissionTemplate(_ context.Context, _ string) 
 }
 func (m *mockSonarClient) SetDefaultPermissionTemplate(_ context.Context, _ string) error {
 	m.setDefaultTemplateCalls++
+	return nil
+}
+func (m *mockSonarClient) CreateWebhook(_ context.Context, _, _, _, _ string) (string, error) {
+	m.createWebhookCalls++
+	if m.createWebhookKey != "" {
+		return m.createWebhookKey, nil
+	}
+	return "wh-key-1", nil
+}
+func (m *mockSonarClient) DeleteWebhook(_ context.Context, _ string) error {
+	m.deleteWebhookCalls++
 	return nil
 }
 
