@@ -307,4 +307,35 @@ var _ = Describe("SonarQubeQualityGate Controller", func() {
 
 		Expect(mock.deleteQualityGateCalls).To(Equal(1))
 	})
+
+	It("rejette une condition onNewCode=true sur une métrique non-new_*", func() {
+		gate := &sonarqubev1alpha1.SonarQubeQualityGate{
+			ObjectMeta: metav1.ObjectMeta{Name: "qg-bad-newcode", Namespace: "default"},
+			Spec: sonarqubev1alpha1.SonarQubeQualityGateSpec{
+				InstanceRef: sonarqubev1alpha1.InstanceRef{Name: "any"},
+				Name:        "qg-bad-newcode",
+				Conditions: []sonarqubev1alpha1.QualityGateConditionSpec{
+					{Metric: "coverage", Operator: "LT", Value: "80", OnNewCode: true},
+				},
+			},
+		}
+		err := k8sClient.Create(ctx, gate)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("metric must be a new_* metric"))
+	})
+
+	It("accepte onNewCode=true quand la métrique commence par new_", func() {
+		gate := &sonarqubev1alpha1.SonarQubeQualityGate{
+			ObjectMeta: metav1.ObjectMeta{Name: "qg-good-newcode", Namespace: "default"},
+			Spec: sonarqubev1alpha1.SonarQubeQualityGateSpec{
+				InstanceRef: sonarqubev1alpha1.InstanceRef{Name: "any"},
+				Name:        "qg-good-newcode",
+				Conditions: []sonarqubev1alpha1.QualityGateConditionSpec{
+					{Metric: "new_coverage", Operator: "LT", Value: "80", OnNewCode: true},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, gate)).To(Succeed())
+		Expect(k8sClient.Delete(ctx, gate)).To(Succeed())
+	})
 })
