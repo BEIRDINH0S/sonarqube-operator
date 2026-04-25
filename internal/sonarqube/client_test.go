@@ -119,18 +119,23 @@ func TestUninstallPlugin(t *testing.T) {
 }
 
 func TestAcknowledgeRiskConsent(t *testing.T) {
-	var called int
+	var calls int
+	var receivedKey, receivedValue string
 	client := newTestServer(t, map[string]http.HandlerFunc{
-		"/api/plugins/acknowledge_risk_consent": func(w http.ResponseWriter, r *http.Request) {
-			called++
-			assert.Equal(t, http.MethodPost, r.Method)
+		"/api/settings/set": func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			require.NoError(t, r.ParseForm())
+			receivedKey = r.FormValue("key")
+			receivedValue = r.FormValue("value")
 			w.WriteHeader(http.StatusNoContent)
 		},
 	})
 
 	err := client.AcknowledgeRiskConsent(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, 1, called)
+	assert.Equal(t, 1, calls)
+	assert.Equal(t, "sonar.plugins.risk.consent", receivedKey)
+	assert.Equal(t, "ACCEPTED", receivedValue)
 }
 
 func TestIsRiskConsentRequired(t *testing.T) {

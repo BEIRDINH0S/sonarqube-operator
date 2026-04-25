@@ -380,7 +380,14 @@ func (c *httpClient) UninstallPlugin(ctx context.Context, key string) error {
 }
 
 func (c *httpClient) AcknowledgeRiskConsent(ctx context.Context) error {
-	_, err := c.do(ctx, http.MethodPost, "/api/plugins/acknowledge_risk_consent", url.Values{})
+	// SonarQube 10.x stores the marketplace risk consent as a system property.
+	// The dedicated /api/plugins/acknowledge_risk_consent action does not exist
+	// on every 10.x patch level (e.g. 10.3.0 returns "Unknown url"), but setting
+	// the property via /api/settings/set works on all of them.
+	_, err := c.do(ctx, http.MethodPost, "/api/settings/set", url.Values{
+		"key":   {"sonar.plugins.risk.consent"},
+		"value": {"ACCEPTED"},
+	})
 	return err
 }
 
