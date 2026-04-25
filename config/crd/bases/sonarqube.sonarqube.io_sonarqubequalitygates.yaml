@@ -179,10 +179,9 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               gateId:
-                description: gateId est l'identifiant numérique du quality gate dans
-                  SonarQube.
-                format: int64
-                type: integer
+                description: gateId est l'identifiant du quality gate dans SonarQube
+                  (UUID depuis 10.x).
+                type: string
               phase:
                 description: phase est l'état courant du quality gate.
                 enum:

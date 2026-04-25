@@ -131,7 +131,7 @@ func (r *SonarQubeQualityGateReconciler) reconcileQualityGate(ctx context.Contex
 		return ctrl.Result{}, fmt.Errorf("getting quality gate: %w", err)
 	}
 
-	var gateID int64
+	var gateID string
 	var currentConditions []sonarqube.Condition
 	if existing == nil {
 		// Le gate n'existe pas → le créer
@@ -151,7 +151,7 @@ func (r *SonarQubeQualityGateReconciler) reconcileQualityGate(ctx context.Contex
 		}
 		gateID = created.ID
 		r.Recorder.Event(gate, corev1.EventTypeNormal, "Created",
-			fmt.Sprintf("Quality gate %q created (id=%d)", gate.Spec.Name, gateID))
+			fmt.Sprintf("Quality gate %q created (id=%s)", gate.Spec.Name, gateID))
 		// currentConditions est nil — toutes les conditions désirées seront ajoutées
 	} else {
 		gateID = existing.ID
@@ -186,7 +186,7 @@ func (r *SonarQubeQualityGateReconciler) reconcileQualityGate(ctx context.Contex
 		Type:               conditionReady,
 		Status:             metav1.ConditionTrue,
 		Reason:             "Ready",
-		Message:            fmt.Sprintf("Quality gate %q is ready (id=%d)", gate.Spec.Name, gateID),
+		Message:            fmt.Sprintf("Quality gate %q is ready (id=%s)", gate.Spec.Name, gateID),
 		ObservedGeneration: gate.Generation,
 	})
 	return ctrl.Result{}, r.Status().Update(ctx, gate)
@@ -245,16 +245,16 @@ func (r *SonarQubeQualityGateReconciler) handleDeletion(ctx context.Context, gat
 		return ctrl.Result{}, nil
 	}
 
-	if err := sonarClient.DeleteQualityGate(ctx, gate.Spec.Name); err != nil {
-		if !errors.Is(err, sonarqube.ErrNotFound) {
-			// Log a warning but do not block cleanup — the gate may already be gone
-			// or the SonarQube API endpoint may have changed (e.g. removed in 10.x).
-			r.Recorder.Event(gate, corev1.EventTypeWarning, "DeleteWarning",
-				fmt.Sprintf("Could not delete quality gate %q from SonarQube (continuing cleanup): %s", gate.Spec.Name, err.Error()))
+	if gate.Status.GateID != "" {
+		if err := sonarClient.DeleteQualityGate(ctx, gate.Status.GateID); err != nil {
+			if !errors.Is(err, sonarqube.ErrNotFound) {
+				r.Recorder.Event(gate, corev1.EventTypeWarning, "DeleteWarning",
+					fmt.Sprintf("Could not delete quality gate %q from SonarQube (continuing cleanup): %s", gate.Spec.Name, err.Error()))
+			}
+		} else {
+			r.Recorder.Event(gate, corev1.EventTypeNormal, "Deleted",
+				fmt.Sprintf("Quality gate %q deleted from SonarQube", gate.Spec.Name))
 		}
-	} else {
-		r.Recorder.Event(gate, corev1.EventTypeNormal, "Deleted",
-			fmt.Sprintf("Quality gate %q deleted from SonarQube", gate.Spec.Name))
 	}
 	controllerutil.RemoveFinalizer(gate, qualityGateFinalizer)
 	return ctrl.Result{}, r.Update(ctx, gate)

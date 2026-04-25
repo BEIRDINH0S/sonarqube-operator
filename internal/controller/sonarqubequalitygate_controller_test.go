@@ -107,7 +107,7 @@ var _ = Describe("SonarQubeQualityGate Controller", func() {
 
 		// GetQualityGate retourne ErrNotFound (getQualityGateResult == nil) → gate absent → CreateQualityGate attendu
 		mock := &mockSonarClient{
-			createQualityGateResult: &sonarqube.QualityGate{ID: 42, Name: "My New Gate"},
+			createQualityGateResult: &sonarqube.QualityGate{ID: "42", Name: "My New Gate"},
 		}
 		_, err := newQualityGateReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
 		Expect(err).NotTo(HaveOccurred())
@@ -117,7 +117,7 @@ var _ = Describe("SonarQubeQualityGate Controller", func() {
 		updated := &sonarqubev1alpha1.SonarQubeQualityGate{}
 		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 		Expect(updated.Status.Phase).To(Equal("Ready"))
-		Expect(updated.Status.GateID).To(Equal(int64(42)))
+		Expect(updated.Status.GateID).To(Equal("42"))
 	})
 
 	It("ajoute les conditions dès la création du gate", func() {
@@ -135,7 +135,7 @@ var _ = Describe("SonarQubeQualityGate Controller", func() {
 		Expect(k8sClient.Create(ctx, g)).To(Succeed())
 
 		mock := &mockSonarClient{
-			createQualityGateResult: &sonarqube.QualityGate{ID: 55, Name: "Gate With Cond From Start"},
+			createQualityGateResult: &sonarqube.QualityGate{ID: "55", Name: "Gate With Cond From Start"},
 		}
 		_, err := newQualityGateReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
 		Expect(err).NotTo(HaveOccurred())
@@ -156,7 +156,7 @@ var _ = Describe("SonarQubeQualityGate Controller", func() {
 		Expect(k8sClient.Create(ctx, newTestQualityGate(qgName, instanceName, "Existing Gate"))).To(Succeed())
 
 		mock := &mockSonarClient{
-			getQualityGateResult: &sonarqube.QualityGate{ID: 7, Name: "Existing Gate", Conditions: nil},
+			getQualityGateResult: &sonarqube.QualityGate{ID: "7", Name: "Existing Gate", Conditions: nil},
 		}
 		_, err := newQualityGateReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
 		Expect(err).NotTo(HaveOccurred())
@@ -166,7 +166,7 @@ var _ = Describe("SonarQubeQualityGate Controller", func() {
 		updated := &sonarqubev1alpha1.SonarQubeQualityGate{}
 		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 		Expect(updated.Status.Phase).To(Equal("Ready"))
-		Expect(updated.Status.GateID).To(Equal(int64(7)))
+		Expect(updated.Status.GateID).To(Equal("7"))
 	})
 
 	It("ajoute les conditions manquantes", func() {
@@ -186,7 +186,7 @@ var _ = Describe("SonarQubeQualityGate Controller", func() {
 
 		// Le gate existe mais n'a aucune condition → 2 AddCondition attendus
 		mock := &mockSonarClient{
-			getQualityGateResult: &sonarqube.QualityGate{ID: 10, Name: "Gate With Conditions", Conditions: nil},
+			getQualityGateResult: &sonarqube.QualityGate{ID: "10", Name: "Gate With Conditions", Conditions: nil},
 		}
 		_, err := newQualityGateReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
 		Expect(err).NotTo(HaveOccurred())
@@ -213,7 +213,7 @@ var _ = Describe("SonarQubeQualityGate Controller", func() {
 		// SonarQube en a deux → la condition "duplicated_lines_density" doit être supprimée
 		mock := &mockSonarClient{
 			getQualityGateResult: &sonarqube.QualityGate{
-				ID:   10,
+				ID:   "10",
 				Name: "Gate Remove",
 				Conditions: []sonarqube.Condition{
 					{ID: "101", Metric: "coverage", Op: "LT", Error: "80"},
@@ -241,7 +241,7 @@ var _ = Describe("SonarQubeQualityGate Controller", func() {
 		Expect(k8sClient.Create(ctx, g)).To(Succeed())
 
 		mock := &mockSonarClient{
-			createQualityGateResult: &sonarqube.QualityGate{ID: 99, Name: "Default Gate"},
+			createQualityGateResult: &sonarqube.QualityGate{ID: "99", Name: "Default Gate"},
 		}
 		_, err := newQualityGateReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
 		Expect(err).NotTo(HaveOccurred())
@@ -259,6 +259,10 @@ var _ = Describe("SonarQubeQualityGate Controller", func() {
 		g := newTestQualityGate(qgName, instanceName, "Gate To Delete")
 		g.Finalizers = []string{qualityGateFinalizer}
 		Expect(k8sClient.Create(ctx, g)).To(Succeed())
+
+		// Set GateID as it would be after a successful reconciliation
+		g.Status.GateID = "uuid-gate-to-delete"
+		Expect(k8sClient.Status().Update(ctx, g)).To(Succeed())
 
 		Expect(k8sClient.Delete(ctx, g)).To(Succeed())
 

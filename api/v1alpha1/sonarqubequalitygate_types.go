@@ -63,9 +63,9 @@ type SonarQubeQualityGateStatus struct {
 	// +optional
 	Phase string `json:"phase,omitempty"`
 
-	// gateId est l'identifiant numérique du quality gate dans SonarQube.
+	// gateId est l'identifiant du quality gate dans SonarQube (UUID depuis 10.x).
 	// +optional
-	GateID int64 `json:"gateId,omitempty"`
+	GateID string `json:"gateId,omitempty"`
 
 	// +listType=map
 	// +listMapKey=type

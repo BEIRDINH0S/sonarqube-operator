@@ -57,7 +57,7 @@ type Project struct {
 
 // QualityGate représente un quality gate SonarQube.
 type QualityGate struct {
-	ID         int64       `json:"id"`
+	ID         string      `json:"id"`
 	Name       string      `json:"name"`
 	IsDefault  bool        `json:"isDefault"`
 	Conditions []Condition `json:"conditions"`
@@ -105,7 +105,9 @@ type Client interface {
 	ListQualityGates(ctx context.Context) ([]QualityGate, error)
 	GetQualityGate(ctx context.Context, name string) (*QualityGate, error)
 	CreateQualityGate(ctx context.Context, name string) (*QualityGate, error)
-	DeleteQualityGate(ctx context.Context, name string) error
+	// DeleteQualityGate supprime le quality gate via l'API REST v2 de SonarQube 10.x.
+	// id est l'UUID retourné par CreateQualityGate / GetQualityGate.
+	DeleteQualityGate(ctx context.Context, id string) error
 	// AddCondition ajoute une condition à un quality gate identifié par son nom.
 	// Le paramètre gateId est déprécié depuis SonarQube 9.8 ; gateName est requis en 10.x.
 	AddCondition(ctx context.Context, gateName string, metric, op, value string) (*Condition, error)
@@ -120,12 +122,17 @@ type Client interface {
 
 // --- Implémentation HTTP ---
 
+// defaultRetryDelays defines the wait between successive retry attempts.
+// Index 0 is the delay before the first retry (after the initial attempt fails).
+var defaultRetryDelays = []time.Duration{500 * time.Millisecond, 1 * time.Second}
+
 type httpClient struct {
-	baseURL    string
-	token      string
-	username   string
-	password   string
-	httpClient *http.Client
+	baseURL     string
+	token       string
+	username    string
+	password    string
+	httpClient  *http.Client
+	retryDelays []time.Duration // nil → use defaultRetryDelays
 }
 
 // NewClient crée un client HTTP pour l'API SonarQube authentifié par Bearer token.
@@ -168,9 +175,36 @@ func (e *apiError) Error() string {
 	return strings.Join(msgs, "; ")
 }
 
-// do exécute une requête HTTP et retourne le body.
-// Gère l'auth Bearer et parse les erreurs SonarQube.
+// do executes an HTTP request with retries for transient network errors.
+// SonarQube API errors (4xx/5xx responses) are not retried — the reconcile
+// loop's own exponential backoff handles those.
 func (c *httpClient) do(ctx context.Context, method, path string, params url.Values) ([]byte, error) {
+	retryDelays := c.retryDelays
+	if retryDelays == nil {
+		retryDelays = defaultRetryDelays
+	}
+
+	body, isNetworkErr, err := c.doOnce(ctx, method, path, params)
+	if err == nil || !isNetworkErr {
+		return body, err
+	}
+
+	for _, delay := range retryDelays {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+		body, isNetworkErr, err = c.doOnce(ctx, method, path, params)
+		if err == nil || !isNetworkErr {
+			return body, err
+		}
+	}
+	return nil, err
+}
+
+// doOnce executes one HTTP attempt. Returns (body, isNetworkError, error).
+func (c *httpClient) doOnce(ctx context.Context, method, path string, params url.Values) ([]byte, bool, error) {
 	var bodyReader io.Reader
 	fullURL := c.baseURL + path
 
@@ -182,7 +216,7 @@ func (c *httpClient) do(ctx context.Context, method, path string, params url.Val
 
 	req, err := http.NewRequestWithContext(ctx, method, fullURL, bodyReader)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	if method == http.MethodPost && params != nil {
@@ -196,24 +230,24 @@ func (c *httpClient) do(ctx context.Context, method, path string, params url.Val
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, true, err // network error — retryable
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, true, err
 	}
 
 	if resp.StatusCode >= 400 {
 		var apiErr apiError
 		if jsonErr := json.Unmarshal(body, &apiErr); jsonErr == nil && len(apiErr.Errors) > 0 {
-			return nil, &apiErr
+			return nil, false, &apiErr
 		}
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, false, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
-	return body, nil
+	return body, false, nil
 }
 
 // --- Système ---
@@ -372,7 +406,7 @@ type qualityGatesResponse struct {
 }
 
 type qualityGateResponse struct {
-	ID   int64  `json:"id"`
+	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
@@ -426,8 +460,8 @@ func (c *httpClient) CreateQualityGate(ctx context.Context, name string) (*Quali
 	return &QualityGate{ID: result.ID, Name: result.Name}, nil
 }
 
-func (c *httpClient) DeleteQualityGate(ctx context.Context, name string) error {
-	_, err := c.do(ctx, http.MethodPost, "/api/qualitygates/delete", url.Values{"name": {name}})
+func (c *httpClient) DeleteQualityGate(ctx context.Context, id string) error {
+	_, err := c.do(ctx, http.MethodDelete, "/api/v2/quality-gates/"+id, nil)
 	return err
 }
 

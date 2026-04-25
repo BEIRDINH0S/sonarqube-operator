@@ -38,6 +38,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	sonarqubev1alpha1 "github.com/BEIRDINH0S/sonarqube-operator/api/v1alpha1"
+	"github.com/BEIRDINH0S/sonarqube-operator/internal/metrics"
 	"github.com/BEIRDINH0S/sonarqube-operator/internal/sonarqube"
 )
 
@@ -101,6 +102,12 @@ func (r *SonarQubeInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	instance.Status.URL = serviceURL
 	if err := r.Status().Update(ctx, instance); err != nil {
 		return ctrl.Result{}, fmt.Errorf("updating status: %w", err)
+	}
+
+	if instance.Status.Phase == conditionReady {
+		metrics.InstanceReady.WithLabelValues(instance.Namespace, instance.Name).Set(1)
+	} else {
+		metrics.InstanceReady.WithLabelValues(instance.Namespace, instance.Name).Set(0)
 	}
 
 	return result, nil

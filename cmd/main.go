@@ -37,6 +37,7 @@ import (
 
 	sonarqubev1alpha1 "github.com/BEIRDINH0S/sonarqube-operator/api/v1alpha1"
 	"github.com/BEIRDINH0S/sonarqube-operator/internal/controller"
+	_ "github.com/BEIRDINH0S/sonarqube-operator/internal/metrics" // register custom Prometheus metrics
 	"github.com/BEIRDINH0S/sonarqube-operator/internal/sonarqube"
 	// +kubebuilder:scaffold:imports
 )

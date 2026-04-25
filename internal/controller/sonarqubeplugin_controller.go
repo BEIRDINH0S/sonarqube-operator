@@ -32,6 +32,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	sonarqubev1alpha1 "github.com/BEIRDINH0S/sonarqube-operator/api/v1alpha1"
+	"github.com/BEIRDINH0S/sonarqube-operator/internal/metrics"
 	"github.com/BEIRDINH0S/sonarqube-operator/internal/sonarqube"
 )
 
@@ -134,6 +135,7 @@ func (r *SonarQubePluginReconciler) reconcilePlugin(ctx context.Context, plugin 
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("listing plugins: %w", err)
 	}
+	metrics.PluginsInstalled.WithLabelValues(plugin.Namespace, plugin.Spec.InstanceRef.Name).Set(float64(len(installed)))
 
 	// Chercher si le plugin est déjà installé
 	var current *sonarqube.Plugin

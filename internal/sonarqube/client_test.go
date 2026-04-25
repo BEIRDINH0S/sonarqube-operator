@@ -169,13 +169,13 @@ func TestCreateQualityGate(t *testing.T) {
 	client := newTestServer(t, map[string]http.HandlerFunc{
 		"/api/qualitygates/create": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"id":42,"name":"strict-gate"}`))
+			_, _ = w.Write([]byte(`{"id":"42","name":"strict-gate"}`))
 		},
 	})
 
 	gate, err := client.CreateQualityGate(context.Background(), "strict-gate")
 	require.NoError(t, err)
-	assert.Equal(t, int64(42), gate.ID)
+	assert.Equal(t, "42", gate.ID)
 	assert.Equal(t, "strict-gate", gate.Name)
 }
 
@@ -197,7 +197,7 @@ func TestGetQualityGate(t *testing.T) {
 	client := newTestServer(t, map[string]http.HandlerFunc{
 		"/api/qualitygates/show": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"id":7,"name":"strict-gate","conditions":[
+			_, _ = w.Write([]byte(`{"id":"7","name":"strict-gate","conditions":[
 				{"id":"101","metric":"coverage","op":"LT","error":"80"}
 			]}`))
 		},
@@ -205,7 +205,7 @@ func TestGetQualityGate(t *testing.T) {
 
 	gate, err := client.GetQualityGate(context.Background(), "strict-gate")
 	require.NoError(t, err)
-	assert.Equal(t, int64(7), gate.ID)
+	assert.Equal(t, "7", gate.ID)
 	assert.Equal(t, "strict-gate", gate.Name)
 	assert.Len(t, gate.Conditions, 1)
 	assert.Equal(t, "coverage", gate.Conditions[0].Metric)
@@ -223,6 +223,18 @@ func TestGetQualityGate_NotFound(t *testing.T) {
 	_, err := client.GetQualityGate(context.Background(), "unknown")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, sonarqube.ErrNotFound)
+}
+
+func TestDeleteQualityGate(t *testing.T) {
+	client := newTestServer(t, map[string]http.HandlerFunc{
+		"/api/v2/quality-gates/uuid-42": func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, http.MethodDelete, r.Method)
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+
+	err := client.DeleteQualityGate(context.Background(), "uuid-42")
+	require.NoError(t, err)
 }
 
 func TestGetQualityGate_NetworkError_NotTreatedAsNotFound(t *testing.T) {
