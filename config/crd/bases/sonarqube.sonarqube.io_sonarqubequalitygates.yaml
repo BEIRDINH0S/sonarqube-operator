@@ -67,6 +67,13 @@ spec:
                         coverage, duplicated_lines_density).'
                       minLength: 1
                       type: string
+                    onNewCode:
+                      default: false
+                      description: |-
+                        onNewCode marks this condition as targeting the new code period.
+                        Only metrics whose key starts with "new_" can be set on the new code period
+                        — the API server rejects the CR otherwise.
+                      type: boolean
                     operator:
                       description: operator est l'opérateur de comparaison.
                       enum:
@@ -83,6 +90,9 @@ spec:
                   - operator
                   - value
                   type: object
+                  x-kubernetes-validations:
+                  - message: when onNewCode is true, metric must be a new_* metric
+                    rule: '!self.onNewCode || self.metric.startsWith(''new_'')'
                 type: array
               instanceRef:
                 description: instanceRef référence la SonarQubeInstance cible.

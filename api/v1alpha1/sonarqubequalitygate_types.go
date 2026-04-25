@@ -42,6 +42,7 @@ type SonarQubeQualityGateSpec struct {
 }
 
 // QualityGateConditionSpec définit une règle du quality gate.
+// +kubebuilder:validation:XValidation:rule="!self.onNewCode || self.metric.startsWith('new_')",message="when onNewCode is true, metric must be a new_* metric"
 type QualityGateConditionSpec struct {
 	// metric est la métrique SonarQube à évaluer (ex: coverage, duplicated_lines_density).
 	// +kubebuilder:validation:MinLength=1
@@ -54,6 +55,13 @@ type QualityGateConditionSpec struct {
 	// value est le seuil d'alerte (ex: "80" pour 80% de couverture minimum avec LT).
 	// +kubebuilder:validation:MinLength=1
 	Value string `json:"value"`
+
+	// onNewCode marks this condition as targeting the new code period.
+	// Only metrics whose key starts with "new_" can be set on the new code period
+	// — the API server rejects the CR otherwise.
+	// +optional
+	// +kubebuilder:default=false
+	OnNewCode bool `json:"onNewCode,omitempty"`
 }
 
 // SonarQubeQualityGateStatus defines the observed state of SonarQubeQualityGate.
