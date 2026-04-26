@@ -348,7 +348,8 @@ var _ = Describe("SonarQubeUser Controller", func() {
 		u.Spec.GlobalPermissions = []string{"admin", "scan"}
 		Expect(k8sClient.Create(ctx, u)).To(Succeed())
 
-		// Status: previously managed "profileadmin" → must be revoked.
+		// Status: "admin" was previously managed (so must NOT be re-granted),
+		// "profileadmin" was previously managed (so must be revoked).
 		updated := &sonarqubev1alpha1.SonarQubeUser{}
 		Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 		updated.Status.ManagedGlobalPermissions = []string{"admin", "profileadmin"}
@@ -360,8 +361,11 @@ var _ = Describe("SonarQubeUser Controller", func() {
 		_, err := newUserReconciler(mock).Reconcile(ctx, reconcile.Request{NamespacedName: nn})
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(mock.addUserGlobalPermCalls).To(Equal(2))
-		Expect(mock.addedGlobalPerms).To(ContainElements("eve:admin", "eve:scan"))
+		// Only "scan" is new (not in managed set), so only one add call is expected.
+		// "admin" is already tracked as managed, re-granting it would error on
+		// some SonarQube versions and adds noise on every reconcile.
+		Expect(mock.addUserGlobalPermCalls).To(Equal(1))
+		Expect(mock.addedGlobalPerms).To(Equal([]string{"eve:scan"}))
 		Expect(mock.removeUserGlobalPermCalls).To(Equal(1))
 		Expect(mock.removedGlobalPerms).To(Equal([]string{"eve:profileadmin"}))
 
