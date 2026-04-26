@@ -133,6 +133,7 @@ nav:
   - Operations:
       - operations/index.md
       - Monitoring: operations/monitoring.md
+      - Multi-tenancy: operations/multi-tenancy.md
       - Upgrade: operations/upgrade.md
       - Troubleshooting: operations/troubleshooting.md
   - Architecture: architecture.md
