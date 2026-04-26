@@ -70,7 +70,7 @@ func ValidateInstanceRefNamespace(ctx context.Context, k8sClient client.Client, 
 	if allowed == "*" {
 		return nil
 	}
-	for _, entry := range strings.Split(allowed, ",") {
+	for entry := range strings.SplitSeq(allowed, ",") {
 		if strings.TrimSpace(entry) == callerNamespace {
 			return nil
 		}
