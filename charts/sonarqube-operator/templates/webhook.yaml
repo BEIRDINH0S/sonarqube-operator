@@ -44,4 +44,30 @@ webhooks:
         apiVersions: [v1alpha1]
         operations: [CREATE, UPDATE]
         resources: [sonarqubeinstances]
+{{/*
+Cross-namespace InstanceRef gate. One webhook per CR that carries
+spec.instanceRef. The handler is the same shared validator on the manager
+side; the per-resource entry here is what the API server uses to route
+admission calls. Same TLS / failurePolicy as the instance webhook.
+*/}}
+{{- $kinds := list "sonarqubeproject" "sonarqubeuser" "sonarqubeplugin" "sonarqubequalitygate" "sonarqubegroup" "sonarqubepermissiontemplate" "sonarqubewebhook" "sonarqubebranchrule" "sonarqubebackup" -}}
+{{- range $kind := $kinds }}
+  - name: v{{ $kind }}.kb.io
+    admissionReviewVersions: [v1]
+    sideEffects: None
+    failurePolicy: {{ $.Values.webhook.failurePolicy }}
+    clientConfig:
+      service:
+        name: {{ include "sonarqube-operator.webhookServiceName" $ }}
+        namespace: {{ $.Release.Namespace }}
+        path: /validate-sonarqube-sonarqube-io-v1alpha1-{{ $kind }}
+      {{- if and (not $.Values.webhook.certManager.enabled) $.Values.webhook.caBundle }}
+      caBundle: {{ $.Values.webhook.caBundle }}
+      {{- end }}
+    rules:
+      - apiGroups: [sonarqube.sonarqube.io]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [{{ $kind }}s]
+{{- end }}
 {{- end }}
