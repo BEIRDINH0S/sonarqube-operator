@@ -109,6 +109,15 @@ func (r *SonarQubeInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, fmt.Errorf("reconciling Ingress: %w", err)
 	}
 
+	if instance.Spec.Monitoring.Enabled {
+		// Scaffold: the actual ServiceMonitor reconciliation has a soft
+		// dependency on monitoring.coreos.com/v1 and will land as a
+		// follow-up. We surface a Warning event so the user knows their
+		// monitoring config is recorded but not yet applied.
+		r.Recorder.Event(instance, corev1.EventTypeWarning, "MonitoringNotImplementedYet",
+			"spec.monitoring.enabled is accepted but the ServiceMonitor reconciler is not wired up yet — see issue #10")
+	}
+
 	serviceURL := instanceAPIURL(instance)
 	result := r.reconcileHealth(ctx, instance, serviceURL)
 
