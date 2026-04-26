@@ -87,8 +87,11 @@ func main() {
 		"If set, the validating webhook server will be started. Requires TLS certificates (e.g. via cert-manager).")
 	flag.IntVar(&webhookPort, "webhook-port", 9443,
 		"The port the validating webhook server binds to. Must match the targetPort of the webhook Service.")
+	// Production-friendly defaults: JSON encoding, structured stack traces only
+	// on errors, sane sampling. Override at deploy time with --zap-devel for the
+	// verbose human-readable console output suited to local `make run`.
 	opts := zap.Options{
-		Development: true,
+		Development: false,
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
