@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"strings"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -90,7 +91,9 @@ func main() {
 	flag.IntVar(&webhookPort, "webhook-port", 9443,
 		"The port the validating webhook server binds to. Must match the targetPort of the webhook Service.")
 	flag.Var(&watchNamespaces, "watch-namespace",
-		"Namespace to watch CRs in. Repeat to watch multiple namespaces. Empty (default) watches all namespaces — pair with rbac.scope=namespaced in the chart to restrict the operator's RBAC to the same set.")
+		"Namespace to watch CRs in. Repeat to watch multiple namespaces. "+
+			"Empty (default) watches all namespaces — pair with rbac.scope=namespaced "+
+			"in the chart to restrict the operator's RBAC to the same set.")
 	// Production-friendly defaults: JSON encoding, structured stack traces only
 	// on errors, sane sampling. Override at deploy time with --zap-devel for the
 	// verbose human-readable console output suited to local `make run`.
@@ -349,14 +352,7 @@ func (s *stringSliceFlag) String() string {
 	if s == nil {
 		return ""
 	}
-	out := ""
-	for i, v := range *s {
-		if i > 0 {
-			out += ","
-		}
-		out += v
-	}
-	return out
+	return strings.Join(*s, ",")
 }
 
 func (s *stringSliceFlag) Set(value string) error {
