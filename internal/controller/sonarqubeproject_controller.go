@@ -387,8 +387,10 @@ func (r *SonarQubeProjectReconciler) reconcileProjectPermissions(ctx context.Con
 }
 
 // reconcileMainBranch fetches the current main branch from SonarQube and renames it
-// if it doesn't match spec.mainBranch. Errors are non-fatal: a warning event is emitted
-// and reconciliation continues so the project doesn't get stuck in Failed.
+// if it doesn't match spec.mainBranch. Errors are non-fatal — they don't block the
+// rest of project reconciliation — but they are surfaced as a MainBranchSynced=False
+// condition so users can detect the failure programmatically rather than only via
+// transient warning events.
 func (r *SonarQubeProjectReconciler) reconcileMainBranch(ctx context.Context, project *sonarqubev1alpha1.SonarQubeProject, sonarClient sonarqube.Client) error {
 	log := logf.FromContext(ctx)
 
@@ -396,22 +398,43 @@ func (r *SonarQubeProjectReconciler) reconcileMainBranch(ctx context.Context, pr
 	if err != nil {
 		r.Recorder.Event(project, corev1.EventTypeWarning, "MainBranchFetchFailed", err.Error())
 		log.Info("Could not fetch main branch, skipping rename", "error", err.Error())
+		setMainBranchCondition(project, metav1.ConditionFalse, "FetchFailed",
+			fmt.Sprintf("Could not fetch current main branch: %s", err))
 		return nil
 	}
 
 	if current == project.Spec.MainBranch {
+		setMainBranchCondition(project, metav1.ConditionTrue, "InSync",
+			fmt.Sprintf("Main branch is %q", current))
 		return nil
 	}
 
 	if err := sonarClient.RenameMainBranch(ctx, project.Spec.Key, project.Spec.MainBranch); err != nil {
 		r.Recorder.Event(project, corev1.EventTypeWarning, "MainBranchRenameFailed", err.Error())
 		log.Info("Could not rename main branch", "from", current, "to", project.Spec.MainBranch, "error", err.Error())
+		setMainBranchCondition(project, metav1.ConditionFalse, "RenameFailed",
+			fmt.Sprintf("Could not rename main branch from %q to %q: %s", current, project.Spec.MainBranch, err))
 		return nil
 	}
 
 	r.Recorder.Event(project, corev1.EventTypeNormal, "MainBranchRenamed",
 		fmt.Sprintf("Main branch renamed from %q to %q", current, project.Spec.MainBranch))
+	setMainBranchCondition(project, metav1.ConditionTrue, "Renamed",
+		fmt.Sprintf("Main branch renamed from %q to %q", current, project.Spec.MainBranch))
 	return nil
+}
+
+// setMainBranchCondition sets the MainBranchSynced condition with the given
+// status, reason and message. ObservedGeneration is set to the project's current
+// generation so consumers can detect stale conditions.
+func setMainBranchCondition(project *sonarqubev1alpha1.SonarQubeProject, status metav1.ConditionStatus, reason, message string) {
+	apimeta.SetStatusCondition(&project.Status.Conditions, metav1.Condition{
+		Type:               conditionMainBranchSynced,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: project.Generation,
+	})
 }
 
 // reconcileCIToken ensures the CI token Secret is present and up to date.
