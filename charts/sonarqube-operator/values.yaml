@@ -153,6 +153,29 @@ rbac:
   create: true
   # -- Create the user-facing aggregated ClusterRoles (admin / editor / viewer).
   createAggregatedRoles: true
+  # -- Scope of the operator's RBAC on core resources (Secrets, Services,
+  # PVCs, StatefulSets, Ingresses, CronJobs).
+  #
+  # `cluster` (default): one ClusterRole grants every verb on every namespace —
+  # easiest install, widest blast radius. Backwards compatible with releases
+  # before this option existed.
+  #
+  # `namespaced`: ClusterRole keeps only the CRD verbs (the operator must
+  # watch the CRDs cluster-wide), and a Role + RoleBinding are generated in
+  # each namespace listed under `rbac.watchNamespaces`. The manager is also
+  # started with `--watch-namespace=...` so its cache matches its RBAC.
+  scope: cluster
+  # -- Namespaces the operator is allowed to reconcile in when
+  # `rbac.scope=namespaced`. Each one gets a Role + RoleBinding granting the
+  # operator the same verbs the cluster-scoped ClusterRole would carry, and
+  # the manager pod gets a matching `--watch-namespace` flag.
+  #
+  # Ignored when `rbac.scope=cluster`. Required when `rbac.scope=namespaced`
+  # — an empty list with namespaced scope produces an operator that can
+  # watch nothing and the chart will fail at render time.
+  watchNamespaces: []
+  # - sonarqube
+  # - team-a
 
 crds:
   # -- Validate that CRDs are installed. Helm 3 installs files under crds/

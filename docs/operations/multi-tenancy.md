@@ -96,11 +96,47 @@ SonarQube server but you still want to know exactly who can talk to it.
 the pre-gate behavior. Use only when every namespace in the cluster is
 trusted equally — typically a single-tenant cluster.
 
-**One operator per tenant namespace**. The operator can be installed
-multiple times in scoped namespaces (`--watch-namespace=team-a` in a
-future release; for now, one Helm release per namespace works). This
-is the strongest isolation but adds operational overhead — consider it
-for hard regulatory boundaries only.
+**One operator per tenant namespace**. Strongest isolation: install the
+chart once per namespace, each release watches only its own. See
+[Narrowing the operator's RBAC](#narrowing-the-operators-rbac) below
+for the supported way to do this with the chart.
+
+## Narrowing the operator's RBAC
+
+By default the operator's ClusterRole grants full access to `secrets`,
+`services`, `persistentvolumeclaims`, `statefulsets`, `ingresses`, and
+`batch/cronjobs` cluster-wide — convenient at install time, widest
+possible blast radius. The chart exposes a tighter mode:
+
+```yaml
+rbac:
+  scope: namespaced
+  watchNamespaces:
+    - sonarqube
+    - team-a
+    - team-b
+```
+
+In `namespaced` mode the chart:
+
+- Keeps a ClusterRole, but with **only** the CRD verbs — the operator
+  must watch the `sonarqube.sonarqube.io` types cluster-wide for the
+  cache to function.
+- Generates a `Role` + `RoleBinding` in each namespace listed under
+  `watchNamespaces`, granting the same core-resource verbs the
+  cluster-scoped ClusterRole would have carried.
+- Passes `--watch-namespace=<ns>` to the manager for each entry, so
+  the controller-runtime cache and the RBAC stay in lockstep — the
+  operator literally cannot list / get / patch outside the listed
+  namespaces.
+
+Setting `rbac.scope=namespaced` with an empty `watchNamespaces` fails
+at chart render time with a clear error.
+
+The default stays `cluster` to preserve backwards compatibility with
+existing installs. Switch to `namespaced` once you've identified every
+namespace your Instances live in — typically as part of moving from a
+single shared SonarQube to per-team Instances.
 
 ## What the gate does *not* protect against
 

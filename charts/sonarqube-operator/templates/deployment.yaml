@@ -59,6 +59,11 @@ spec:
             - --webhook-port={{ .Values.webhook.port }}
             - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
             {{- end }}
+            {{- if eq .Values.rbac.scope "namespaced" }}
+            {{- range .Values.rbac.watchNamespaces }}
+            - --watch-namespace={{ . }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
