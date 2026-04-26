@@ -17,11 +17,25 @@ still ClickOps: quality gates set by hand and lost when the database is
 restored, projects with inconsistent visibility, CI tokens generated once and
 never rotated. This operator fixes all of that.
 
-Five CRDs — `SonarQubeInstance`, `SonarQubePlugin`, `SonarQubeProject`,
-`SonarQubeQualityGate`, `SonarQubeUser` — cover the full surface, with drift
-detection, finalizers, validating webhooks, Prometheus metrics, and
-rate-limited reconciliation. Everything is reconciled continuously: change a
-CR, the operator drives the SonarQube API.
+Ten CRDs cover the full SonarQube surface:
+
+| CRD | Purpose |
+|---|---|
+| `SonarQubeInstance` | StatefulSet + Service + PVC + optional Ingress, with admin bootstrap. |
+| `SonarQubePlugin` | Marketplace plugins, with batched restarts on install/uninstall. |
+| `SonarQubeProject` | Projects with visibility, main branch, quality gate, CI token, tags, links, settings, permissions. |
+| `SonarQubeQualityGate` | Quality gates with conditions, drift-corrected. |
+| `SonarQubeUser` | Users with groups, SCM accounts, standalone tokens, global permissions. |
+| `SonarQubeGroup` | SonarQube groups, drift-corrected. |
+| `SonarQubePermissionTemplate` | Permission templates applied automatically by project-key pattern. |
+| `SonarQubeWebhook` | Project-scoped or global webhooks (HMAC-signed). |
+| `SonarQubeBranchRule` | Per-branch new-code-period, gate override, settings. *(scaffold — admission only)* |
+| `SonarQubeBackup` | Scheduled `pg_dump` + extensions snapshot to PVC or S3. *(scaffold — admission only)* |
+
+All ship with drift detection where applicable, finalizers, validating
+webhooks, Prometheus metrics, and rate-limited reconciliation. Everything
+is reconciled continuously: change a CR, the operator drives the SonarQube
+API.
 
 For a hands-on tour see the
 [GitOps example repo](https://github.com/BEIRDINH0S/sonarqube-operator-gitops-example),

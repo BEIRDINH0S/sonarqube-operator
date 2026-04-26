@@ -48,6 +48,32 @@ spec:
   groups:
     - sonar-users
     - backend-team
+
+  # Optional. SCM identities (Git committer emails / names) linked to this
+  # user. Set semantics: SonarQube's SCM account list is replaced by this
+  # list on each reconcile.
+  scmAccounts:
+    - john.doe@example.com
+    - jdoe@github
+
+  # Optional. Standalone user tokens stored in Kubernetes Secrets.
+  # Independent of any project — for personal automation, read-only API
+  # access, or a global analysis token.
+  tokens:
+    - name: read-only-api
+      type: USER_TOKEN
+      secretName: john-doe-readonly-token
+      expiresIn: 8760h               # optional, 1 year
+    - name: global-analysis
+      type: GLOBAL_ANALYSIS_TOKEN
+      secretName: org-analysis-token
+
+  # Optional. Instance-wide permissions granted to this user.
+  # The operator only ever revokes grants it created (tracked via
+  # status.managedGlobalPermissions).
+  globalPermissions:
+    - scan
+    - profileadmin
 ```
 
 ---
@@ -168,6 +194,85 @@ This means the operator can coexist safely with LDAP / SAML group sync,
 SCIM provisioners, and manual UI grants. It will never fight to remove a
 group it didn't add.
 
+### `scmAccounts`
+
+| | |
+|---|---|
+| **Type** | `[]string` |
+| **Required** | no |
+
+The SCM identities (Git committer emails, GitHub handles, internal usernames…)
+SonarQube should attribute analysis findings to. When a `git blame` line in
+an analyzed project resolves to one of these identities, SonarQube credits
+the issue to this user — useful for the *author of the issue* facet, the
+*new code introduced by* metric, and personal dashboards.
+
+**Set semantics**: on each reconcile, SonarQube's SCM account list for
+this user is replaced by `spec.scmAccounts`. Pass an empty list (or omit
+the field once it was previously set) to clear all accounts. There is no
+per-account opt-out — the field is fully owned by the operator.
+
+Common entries: the user's primary commit email, alternate emails (work
+vs. personal), and any internal usernames pre-dating consistent email
+hygiene.
+
+### `tokens`
+
+| | |
+|---|---|
+| **Type** | `[]UserToken` |
+| **Required** | no |
+
+Standalone SonarQube user tokens, each materialized as its own Kubernetes
+Secret in the user's namespace. Distinct from `SonarQubeProject.spec.ciToken`
+(which is a per-project analysis token tied to the project's lifecycle):
+these are user-scoped tokens for personal automation, read-only API access,
+or a global-analysis token shared by many CI pipelines.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `name` | string | yes | — | SonarQube-side token name. Must be unique per user. |
+| `type` | enum | no | `USER_TOKEN` | `USER_TOKEN` (full user permissions) or `GLOBAL_ANALYSIS_TOKEN` (analysis-only, no read of the rest of the API). |
+| `secretName` | string | yes | — | Name of the Kubernetes Secret to store the token under the key `token`. |
+| `expiresIn` | duration | no | — (no expiry) | Optional Go-style duration: `720h` (30 days), `8760h` (1 year). Passed through to SonarQube as the token's `expirationDate`. |
+
+The operator follows "manage what I created": only token names that
+appear in `status.managedTokens` are revoked when they leave the spec.
+Tokens generated through the SonarQube UI are never touched.
+
+**Rotation**: delete the Secret to force the operator to regenerate the
+token on the next reconcile (the previous SonarQube-side token is
+revoked as part of the same cycle). The operator does **not** auto-rotate
+before `expiresIn` — see the [Token Rotation guide](../../how-to/token-rotation.md)
+for scheduled-rotation patterns.
+
+### `globalPermissions`
+
+| | |
+|---|---|
+| **Type** | `[]string` |
+| **Required** | no |
+
+Instance-wide permissions granted to this user. Valid values:
+
+| Permission | Effect |
+|---|---|
+| `admin` | Full instance administration. Use sparingly. |
+| `gateadmin` | Create / edit / delete quality gates. |
+| `profileadmin` | Create / edit / delete quality profiles. |
+| `provisioning` | Create new projects. |
+| `scan` | Execute analysis. The default permission for CI bots. |
+
+The operator follows "manage what I created": only grants that appear in
+`status.managedGlobalPermissions` are revoked when they leave the spec.
+Permissions assigned through the SonarQube UI are never removed.
+
+!!! warning "`admin` is highly privileged"
+    A user with `admin` can change the admin password, install plugins,
+    manage all users and groups, and see every project regardless of
+    visibility. Prefer narrow, role-based grants (`gateadmin`,
+    `profileadmin`) and reserve `admin` for break-glass accounts.
+
 ---
 
 ## Status
@@ -201,6 +306,8 @@ status:
 |---|---|
 | `active` | Whether the user account is currently active in SonarQube. False after deletion (operator deactivates rather than hard-deletes). |
 | `groups` | Groups the operator has assigned. Used for the "manage what I created" diff (see above). Never edit by hand. |
+| `managedTokens` | Names of standalone tokens the operator generated for this user. Names removed from `spec.tokens` but still in this list are revoked on the next reconcile. Never edit by hand. |
+| `managedGlobalPermissions` | Global permissions the operator granted to this user. Permissions no longer in `spec.globalPermissions` are revoked on the next reconcile. Never edit by hand. |
 
 ---
 

@@ -54,12 +54,13 @@ continuous. Drift is detected and corrected.
 
     [:octicons-arrow-right-24: Reference](reference/crds/sonarqubeplugin.md)
 
--   :material-folder-multiple:{ .lg .middle } **Projects, gates, users**
+-   :material-folder-multiple:{ .lg .middle } **Projects, gates, users, groups**
 
     ---
 
-    `SonarQubeProject`, `SonarQubeQualityGate`, `SonarQubeUser` — all with
-    drift detection. Configure once in Git, the operator keeps SonarQube in
+    `SonarQubeProject`, `SonarQubeQualityGate`, `SonarQubeUser`,
+    `SonarQubeGroup`, `SonarQubePermissionTemplate` — all with drift
+    detection. Configure once in Git, the operator keeps SonarQube in
     sync.
 
     [:octicons-arrow-right-24: Reference](reference/index.md)
@@ -119,6 +120,8 @@ Then deploy your first instance — see the [Quick Start](getting-started/quick-
 
 ## Project status
 
-Currently in **beta** (`v0.5.x`). All five CRDs are implemented and tested
-end-to-end. APIs are versioned `v1alpha1` and may change before `v1.0.0` — see
-the [changelog](changelog.md) for migration notes.
+Currently in **beta** (`v0.5.x`). Ten CRDs ship — eight with full reconcile
+loops, two (`SonarQubeBranchRule`, `SonarQubeBackup`) shipped as
+admission-only scaffolds with their reconcile pipelines tracked as
+follow-ups. APIs are versioned `v1alpha1` and may change before `v1.0.0`
+— see the [changelog](changelog.md) for migration notes.

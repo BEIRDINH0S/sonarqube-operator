@@ -5,9 +5,11 @@ where it is going. For the full per-CRD task list, see the
 [GitHub issues](https://github.com/BEIRDINH0S/sonarqube-operator/issues)
 and the [Releases page](https://github.com/BEIRDINH0S/sonarqube-operator/releases).
 
-> **Current status**: late beta. All five CRDs are implemented and
-> end-to-end tested. The API is in `v1alpha1` and may change before
-> `v1.0.0` — see the changelog for migration notes between releases.
+> **Current status**: late beta. Ten CRDs ship — eight with full
+> reconcile loops, two (`SonarQubeBranchRule`, `SonarQubeBackup`) as
+> admission-only scaffolds. The API is in `v1alpha1` and may change
+> before `v1.0.0` — see the changelog for migration notes between
+> releases.
 
 ---
 
@@ -17,6 +19,19 @@ and the [Releases page](https://github.com/BEIRDINH0S/sonarqube-operator/release
   `SonarQubeProject`, `SonarQubeQualityGate`, `SonarQubeUser`. All
   reconciled with finalizers (non-blocking), drift correction where
   applicable, and full envtest coverage.
+- **Extended CRDs** — `SonarQubeGroup`, `SonarQubePermissionTemplate`,
+  `SonarQubeWebhook` shipped with full reconcile loops; `SonarQubeBranchRule`
+  and `SonarQubeBackup` shipped as admission-only scaffolds (reconcile
+  pipelines tracked as separate follow-ups).
+- **Instance scheduling & security** — `nodeSelector`, `tolerations`,
+  `affinity`, `podSecurityContext`, `securityContext`, ServiceMonitor,
+  DCE topology spec field (single-StatefulSet rendering today; full
+  two-StatefulSet DCE rendering still pending).
+- **Project enrichment** — `tags`, `links`, `settings`, `permissions`
+  with managed-set ownership tracking.
+- **User enrichment** — `scmAccounts`, standalone `tokens` (with
+  `USER_TOKEN` and `GLOBAL_ANALYSIS_TOKEN` types), `globalPermissions`
+  with managed-set ownership tracking.
 - **Production hardening** — leader election, validating webhook
   (opt-in), Prometheus metrics, rate-limited reconcile, batched
   SonarQube restarts on plugin install/uninstall.
@@ -74,11 +89,21 @@ running in production with at least a handful of external users.
 - OpenTelemetry tracing through the Reconcile loop
 - OpenShift-specific testing and SCC packaging
 - Mutation / fuzz / soak testing
-- Additional CRDs:
-  - `SonarQubeGroup` — declarative SonarQube groups
-  - `SonarQubeBranchRule` — per-branch quality gate rules
-  - `SonarQubeWebhook` — manage SonarQube → external webhooks as code
-  - `SonarQubeBackup` — orchestrate `pg_dump` + PVC snapshot
+- **Reconcile pipelines for the scaffold CRDs**:
+  - `SonarQubeBranchRule` — actual calls to `/api/new_code_periods/set`,
+    `/api/qualitygates/select`, `/api/settings/set` scoped to a branch.
+  - `SonarQubeBackup` — materialize a `CronJob` running `pg_dump` +
+    extensions snapshot, ship to PVC/S3, retention pruning.
+- **Instance** — true two-StatefulSet (app + search) DCE rendering
+  driven by `spec.cluster`.
+- **Permission templates** — surface `spec.permissions[]` on
+  `SonarQubePermissionTemplate` so template grants can be declared as
+  code (today they are managed in the SonarQube UI even when the
+  template itself is operator-managed).
+- **Webhook drift correction** — delete + re-create when URL or HMAC
+  secret diverges from the spec.
+- A `SonarQubeRestore` CRD orchestrating the inverse of
+  `SonarQubeBackup`.
 
 These are explicitly **not** blocking for `v1.0.0` and may move forward,
 backward, or get redefined based on user feedback.
