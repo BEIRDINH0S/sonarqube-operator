@@ -59,6 +59,7 @@ func main() {
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
+	var webhookPort int
 	var enableLeaderElection bool
 	var enableWebhook bool
 	var probeAddr string
@@ -84,6 +85,8 @@ func main() {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.BoolVar(&enableWebhook, "enable-webhook", false,
 		"If set, the validating webhook server will be started. Requires TLS certificates (e.g. via cert-manager).")
+	flag.IntVar(&webhookPort, "webhook-port", 9443,
+		"The port the validating webhook server binds to. Must match the targetPort of the webhook Service.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -110,6 +113,7 @@ func main() {
 	// Initial webhook TLS options
 	webhookTLSOpts := tlsOpts
 	webhookServerOptions := webhook.Options{
+		Port:    webhookPort,
 		TLSOpts: webhookTLSOpts,
 	}
 

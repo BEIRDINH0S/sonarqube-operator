@@ -56,6 +56,7 @@ spec:
             {{- end }}
             {{- if .Values.webhook.enabled }}
             - --enable-webhook
+            - --webhook-port={{ .Values.webhook.port }}
             - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
             {{- end }}
             {{- with .Values.extraArgs }}
