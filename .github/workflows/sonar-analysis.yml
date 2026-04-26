@@ -1,0 +1,62 @@
+name: SonarQube Analysis
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# Skip on PRs from forks: SONAR_TOKEN is not exposed to fork-triggered runs,
+# so the scan would fail with a confusing 401. Maintainers can re-trigger via
+# a same-repo branch if they need a fork PR scanned.
+jobs:
+  preflight:
+    name: Check secrets are set
+    runs-on: ubuntu-latest
+    outputs:
+      can_scan: ${{ steps.check.outputs.can_scan }}
+    steps:
+      - id: check
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        run: |
+          if [ -n "$SONAR_TOKEN" ] && [ -n "$SONAR_HOST_URL" ]; then
+            echo "can_scan=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::SONAR_TOKEN secret or SONAR_HOST_URL variable missing — skipping scan"
+            echo "can_scan=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  scan:
+    name: Scan and wait for Quality Gate
+    needs: preflight
+    if: needs.preflight.outputs.can_scan == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Sonar PR analysis needs the full history to compute "new code"
+          # against the target branch.
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run unit tests with coverage
+        run: |
+          go mod tidy
+          make test
+
+      - name: SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@v4
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.qualitygate.timeout=300
