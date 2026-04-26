@@ -1,0 +1,10 @@
+apiVersion: sonarqube.sonarqube.io/v1alpha1
+kind: SonarQubeGroup
+metadata:
+  name: my-team
+  namespace: default
+spec:
+  instanceRef:
+    name: my-sonarqube
+  name: my-team
+  description: Engineering team with project create/edit access

@@ -1,0 +1,12 @@
+apiVersion: sonarqube.sonarqube.io/v1alpha1
+kind: SonarQubeBranchRule
+metadata:
+  name: my-project-main
+  namespace: default
+spec:
+  instanceRef:
+    name: my-sonarqube
+  projectKey: my-project
+  branch: main
+  newCodePeriod:
+    mode: previous_version

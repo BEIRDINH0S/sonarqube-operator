@@ -20,32 +20,51 @@ rules:
     resources:
       - statefulsets
     verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [batch]
+    resources:
+      - cronjobs
+    verbs: [create, delete, get, list, patch, update, watch]
   - apiGroups: [networking.k8s.io]
     resources:
       - ingresses
     verbs: [create, delete, get, list, patch, update, watch]
   - apiGroups: [sonarqube.sonarqube.io]
     resources:
+      - sonarqubebackups
+      - sonarqubebranchrules
+      - sonarqubegroups
       - sonarqubeinstances
+      - sonarqubepermissiontemplates
       - sonarqubeplugins
       - sonarqubeprojects
       - sonarqubequalitygates
       - sonarqubeusers
+      - sonarqubewebhooks
     verbs: [create, delete, get, list, patch, update, watch]
   - apiGroups: [sonarqube.sonarqube.io]
     resources:
+      - sonarqubebackups/finalizers
+      - sonarqubebranchrules/finalizers
+      - sonarqubegroups/finalizers
       - sonarqubeinstances/finalizers
+      - sonarqubepermissiontemplates/finalizers
       - sonarqubeplugins/finalizers
       - sonarqubeprojects/finalizers
       - sonarqubequalitygates/finalizers
       - sonarqubeusers/finalizers
+      - sonarqubewebhooks/finalizers
     verbs: [update]
   - apiGroups: [sonarqube.sonarqube.io]
     resources:
+      - sonarqubebackups/status
+      - sonarqubebranchrules/status
+      - sonarqubegroups/status
       - sonarqubeinstances/status
+      - sonarqubepermissiontemplates/status
       - sonarqubeplugins/status
       - sonarqubeprojects/status
       - sonarqubequalitygates/status
       - sonarqubeusers/status
+      - sonarqubewebhooks/status
     verbs: [get, patch, update]
 {{- end }}

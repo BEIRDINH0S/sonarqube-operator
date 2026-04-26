@@ -5,4 +5,9 @@ resources:
 - sonarqube_v1alpha1_sonarqubeproject.yaml
 - sonarqube_v1alpha1_sonarqubequalitygate.yaml
 - sonarqube_v1alpha1_sonarqubeuser.yaml
+- sonarqube_v1alpha1_sonarqubegroup.yaml
+- sonarqube_v1alpha1_sonarqubepermissiontemplate.yaml
+- sonarqube_v1alpha1_sonarqubewebhook.yaml
+- sonarqube_v1alpha1_sonarqubebranchrule.yaml
+- sonarqube_v1alpha1_sonarqubebackup.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
