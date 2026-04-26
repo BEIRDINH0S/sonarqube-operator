@@ -1,0 +1,13 @@
+apiVersion: sonarqube.sonarqube.io/v1alpha1
+kind: SonarQubeBackup
+metadata:
+  name: nightly
+  namespace: default
+spec:
+  instanceRef:
+    name: my-sonarqube
+  schedule: "0 2 * * *"
+  retention: 7
+  destination:
+    pvc:
+      claimName: sonarqube-backups

@@ -1,0 +1,12 @@
+apiVersion: sonarqube.sonarqube.io/v1alpha1
+kind: SonarQubePermissionTemplate
+metadata:
+  name: team-a
+  namespace: default
+spec:
+  instanceRef:
+    name: my-sonarqube
+  name: team-a
+  description: Default permissions for projects owned by team-a
+  projectKeyPattern: "team-a\\..*"
+  isDefault: false

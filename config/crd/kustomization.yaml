@@ -6,6 +6,12 @@ resources:
 - bases/sonarqube.sonarqube.io_sonarqubeplugins.yaml
 - bases/sonarqube.sonarqube.io_sonarqubeprojects.yaml
 - bases/sonarqube.sonarqube.io_sonarqubequalitygates.yaml
+- bases/sonarqube.sonarqube.io_sonarqubeusers.yaml
+- bases/sonarqube.sonarqube.io_sonarqubegroups.yaml
+- bases/sonarqube.sonarqube.io_sonarqubepermissiontemplates.yaml
+- bases/sonarqube.sonarqube.io_sonarqubewebhooks.yaml
+- bases/sonarqube.sonarqube.io_sonarqubebranchrules.yaml
+- bases/sonarqube.sonarqube.io_sonarqubebackups.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

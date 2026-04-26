@@ -1,0 +1,13 @@
+apiVersion: sonarqube.sonarqube.io/v1alpha1
+kind: SonarQubeWebhook
+metadata:
+  name: ci-notify
+  namespace: default
+spec:
+  instanceRef:
+    name: my-sonarqube
+  name: ci-notify
+  url: https://ci.example.com/sonarqube-webhook
+  projectKey: my-project
+  secretRef:
+    name: ci-notify-hmac

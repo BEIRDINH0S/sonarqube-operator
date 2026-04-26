@@ -2,7 +2,8 @@ apiVersion: v2
 name: sonarqube-operator
 description: |
   A Kubernetes operator that manages the full lifecycle of SonarQube and its
-  configuration as code: instances, plugins, projects, quality gates and users.
+  configuration as code: instances, plugins, projects, quality gates, users,
+  groups, permission templates, webhooks, branch rules and backups.
 type: application
 kubeVersion: ">=1.27.0-0"
 version: 0.5.0
@@ -50,3 +51,28 @@ annotations:
       name: sonarqubeusers.sonarqube.sonarqube.io
       displayName: SonarQube User
       description: A SonarQube user with declarative group membership.
+    - kind: SonarQubeGroup
+      version: v1alpha1
+      name: sonarqubegroups.sonarqube.sonarqube.io
+      displayName: SonarQube Group
+      description: A SonarQube group managed declaratively.
+    - kind: SonarQubePermissionTemplate
+      version: v1alpha1
+      name: sonarqubepermissiontemplates.sonarqube.sonarqube.io
+      displayName: SonarQube Permission Template
+      description: A permission template applied automatically to projects matching a key pattern.
+    - kind: SonarQubeWebhook
+      version: v1alpha1
+      name: sonarqubewebhooks.sonarqube.sonarqube.io
+      displayName: SonarQube Webhook
+      description: A SonarQube webhook (project-scoped or global) with HMAC signing.
+    - kind: SonarQubeBranchRule
+      version: v1alpha1
+      name: sonarqubebranchrules.sonarqube.sonarqube.io
+      displayName: SonarQube Branch Rule
+      description: Per-branch new-code-period, gate override and settings (scaffold).
+    - kind: SonarQubeBackup
+      version: v1alpha1
+      name: sonarqubebackups.sonarqube.sonarqube.io
+      displayName: SonarQube Backup
+      description: Scheduled pg_dump + extensions snapshot to PVC or S3 (scaffold).
