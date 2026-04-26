@@ -299,6 +299,10 @@ func main() {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "SonarQubeInstance")
 			os.Exit(1)
 		}
+		if err := sonarqubev1alpha1.SetupInstanceRefWebhooks(mgr); err != nil {
+			setupLog.Error(err, "Failed to create instanceRef webhooks")
+			os.Exit(1)
+		}
 	}
 	// +kubebuilder:scaffold:builder
 
