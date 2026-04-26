@@ -444,6 +444,19 @@ func (r *SonarQubeProjectReconciler) reconcileCIToken(ctx context.Context, proje
 		return nil
 	}
 
+	// Clear the rotate-token annotation BEFORE we revoke or regenerate. If this
+	// Patch fails we abort the rotation; the existing token stays valid and the
+	// next reconcile retries. Doing it the other way around (rotate first, then
+	// clear the annotation) caused token churn: an annotation Update failure
+	// re-rotated the just-created token on every retry until success.
+	if forceRotate {
+		patch := client.MergeFrom(project.DeepCopy())
+		delete(project.Annotations, AnnotationRotateToken)
+		if err := r.Patch(ctx, project, patch); err != nil {
+			return fmt.Errorf("clearing rotation annotation: %w", err)
+		}
+	}
+
 	// Revoke the old token in SonarQube (best-effort — it may not exist yet).
 	_ = sonarClient.RevokeToken(ctx, tokenName)
 
@@ -478,14 +491,6 @@ func (r *SonarQubeProjectReconciler) reconcileCIToken(ctx context.Context, proje
 	}
 	if err := r.Create(ctx, newSecret); err != nil {
 		return fmt.Errorf("creating CI token secret: %w", err)
-	}
-
-	// Remove the rotation annotation so the next reconciliation is a no-op.
-	if forceRotate {
-		delete(project.Annotations, AnnotationRotateToken)
-		if err := r.Update(ctx, project); err != nil {
-			return fmt.Errorf("removing rotation annotation: %w", err)
-		}
 	}
 
 	project.Status.TokenSecretRef = secretName
