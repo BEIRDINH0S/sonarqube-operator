@@ -38,13 +38,30 @@ func SetupSonarQubeInstanceWebhookWithManager(mgr ctrl.Manager) error {
 		Complete()
 }
 
-func (v *SonarQubeInstanceValidator) ValidateCreate(_ context.Context, _ *SonarQubeInstance) (admission.Warnings, error) {
+func (v *SonarQubeInstanceValidator) ValidateCreate(_ context.Context, instance *SonarQubeInstance) (admission.Warnings, error) {
+	if err := validateClusterEditionMatch(instance.Spec.Edition, instance.Spec.Cluster); err != nil {
+		return nil, err
+	}
 	return nil, nil
+}
+
+// validateClusterEditionMatch rejects spec.cluster on non-enterprise editions.
+func validateClusterEditionMatch(edition string, cluster *ClusterSpec) error {
+	if cluster == nil {
+		return nil
+	}
+	if edition != "enterprise" {
+		return fmt.Errorf("spec.cluster requires spec.edition=enterprise, got %q", edition)
+	}
+	return nil
 }
 
 // ValidateUpdate rejects spec.version downgrades (e.g. 10.3 → 9.9).
 func (v *SonarQubeInstanceValidator) ValidateUpdate(_ context.Context, oldInstance, newInstance *SonarQubeInstance) (admission.Warnings, error) {
 	if err := validateVersionNotDowngraded(oldInstance.Spec.Version, newInstance.Spec.Version); err != nil {
+		return nil, err
+	}
+	if err := validateClusterEditionMatch(newInstance.Spec.Edition, newInstance.Spec.Cluster); err != nil {
 		return nil, err
 	}
 	return nil, nil
