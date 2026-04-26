@@ -29,6 +29,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -65,6 +66,7 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var watchNamespaces stringSliceFlag
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -87,6 +89,8 @@ func main() {
 		"If set, the validating webhook server will be started. Requires TLS certificates (e.g. via cert-manager).")
 	flag.IntVar(&webhookPort, "webhook-port", 9443,
 		"The port the validating webhook server binds to. Must match the targetPort of the webhook Service.")
+	flag.Var(&watchNamespaces, "watch-namespace",
+		"Namespace to watch CRs in. Repeat to watch multiple namespaces. Empty (default) watches all namespaces — pair with rbac.scope=namespaced in the chart to restrict the operator's RBAC to the same set.")
 	// Production-friendly defaults: JSON encoding, structured stack traces only
 	// on errors, sane sampling. Override at deploy time with --zap-devel for the
 	// verbose human-readable console output suited to local `make run`.
@@ -163,6 +167,19 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
+	cacheOpts := cache.Options{}
+	if len(watchNamespaces) > 0 {
+		// Restrict the manager's cache (and therefore every controller's
+		// list/watch) to the requested namespaces. The operator's RBAC
+		// must allow it — see chart values rbac.scope and
+		// rbac.watchNamespaces.
+		cacheOpts.DefaultNamespaces = make(map[string]cache.Config, len(watchNamespaces))
+		for _, ns := range watchNamespaces {
+			cacheOpts.DefaultNamespaces[ns] = cache.Config{}
+		}
+		setupLog.Info("Restricting watched namespaces", "namespaces", []string(watchNamespaces))
+	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
@@ -175,6 +192,7 @@ func main() {
 		// waiting for the full LeaseDuration. Safe here because the manager exits
 		// cleanly via signal handling with no post-stop work.
 		LeaderElectionReleaseOnCancel: true,
+		Cache:                         cacheOpts,
 	})
 	if err != nil {
 		setupLog.Error(err, "Failed to start manager")
@@ -320,4 +338,28 @@ func main() {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
 	}
+}
+
+// stringSliceFlag accumulates a repeatable string flag, so users can pass
+// `--watch-namespace foo --watch-namespace bar` instead of relying on a CSV
+// convention. flag.Var requires implementing String() and Set().
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string {
+	if s == nil {
+		return ""
+	}
+	out := ""
+	for i, v := range *s {
+		if i > 0 {
+			out += ","
+		}
+		out += v
+	}
+	return out
+}
+
+func (s *stringSliceFlag) Set(value string) error {
+	*s = append(*s, value)
+	return nil
 }

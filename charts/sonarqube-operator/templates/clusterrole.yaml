@@ -1,4 +1,7 @@
 {{- if .Values.rbac.create -}}
+{{- if and (eq .Values.rbac.scope "namespaced") (empty .Values.rbac.watchNamespaces) -}}
+{{- fail "rbac.scope is 'namespaced' but rbac.watchNamespaces is empty — set the namespaces the operator should reconcile in." -}}
+{{- end -}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -10,6 +13,7 @@ rules:
     resources:
       - events
     verbs: [create, patch]
+{{- if eq .Values.rbac.scope "cluster" }}
   - apiGroups: [""]
     resources:
       - persistentvolumeclaims
@@ -28,6 +32,7 @@ rules:
     resources:
       - ingresses
     verbs: [create, delete, get, list, patch, update, watch]
+{{- end }}
   - apiGroups: [sonarqube.sonarqube.io]
     resources:
       - sonarqubebackups
