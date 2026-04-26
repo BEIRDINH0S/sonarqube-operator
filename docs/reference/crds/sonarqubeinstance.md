@@ -4,8 +4,10 @@ A managed SonarQube server. Creating a `SonarQubeInstance` provisions a
 `StatefulSet`, a `Service`, a `PersistentVolumeClaim` for SonarQube data, an
 optional `Ingress`, and bootstraps the admin password from a `Secret` you
 provide. Once `Ready`, every other CRD in this operator (`SonarQubePlugin`,
-`SonarQubeProject`, `SonarQubeQualityGate`, `SonarQubeUser`) can target this
-instance through `spec.instanceRef.name`.
+`SonarQubeProject`, `SonarQubeQualityGate`, `SonarQubeUser`,
+`SonarQubeGroup`, `SonarQubePermissionTemplate`, `SonarQubeWebhook`,
+`SonarQubeBranchRule`, `SonarQubeBackup`) can target this instance through
+`spec.instanceRef.name`.
 
 | | |
 |---|---|
@@ -74,6 +76,46 @@ spec:
   # Set to true on PSA-restricted clusters where this sysctls is configured
   # via DaemonSet, MachineConfig, or node tuning.
   skipSysctlInit: false
+
+  # Optional. Pod scheduling — passed verbatim to the StatefulSet pod template.
+  nodeSelector:
+    workload: sonarqube
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: sonarqube
+      effect: NoSchedule
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/arch
+                operator: In
+                values: [amd64]
+
+  # Optional. Pod-level and container-level security contexts. The operator
+  # preserves a default fsGroup=1000 (matches the SonarQube image UID) when
+  # podSecurityContext is set without an explicit fsGroup.
+  podSecurityContext:
+    runAsNonRoot: true
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+
+  # Optional. Prometheus ServiceMonitor for the operator's metrics endpoint.
+  monitoring:
+    enabled: true
+    scrapeInterval: 30s
+    labels:
+      release: kube-prometheus-stack
+
+  # Optional. Data Center Edition topology (Enterprise+ only).
+  cluster:
+    appNodes: 2
+    searchNodes: 3
+    licenseSecretRef: sonarqube-dce-license
 ```
 
 ---
@@ -220,6 +262,114 @@ configured on the node via:
 
 If `skipSysctlInit: true` is set on a node where `vm.max_map_count` is too
 low, Elasticsearch will fail to start with a clear log message.
+
+### `nodeSelector`
+
+| | |
+|---|---|
+| **Type** | `map[string]string` |
+| **Required** | no |
+
+Standard Kubernetes node-selector. Passed verbatim to the StatefulSet pod
+template. Use it to pin SonarQube to specific node pools — typical case is
+a memory-optimized pool, since SonarQube's embedded Elasticsearch wants at
+least 2 GB.
+
+### `tolerations`
+
+| | |
+|---|---|
+| **Type** | `[]corev1.Toleration` |
+| **Required** | no |
+
+Standard Kubernetes tolerations, passed verbatim to the pod template.
+Use to land SonarQube on tainted nodes (dedicated pools, GPU/spot
+exclusions, etc.).
+
+### `affinity`
+
+| | |
+|---|---|
+| **Type** | `*corev1.Affinity` |
+| **Required** | no |
+
+Standard Kubernetes affinity rules (node/pod affinity, anti-affinity).
+Passed verbatim to the pod template. The operator does not impose any
+default anti-affinity — for true HA, set it explicitly along with
+`spec.cluster` (Enterprise+ only).
+
+### `podSecurityContext`
+
+| | |
+|---|---|
+| **Type** | `*corev1.PodSecurityContext` |
+| **Required** | no |
+
+Pod-level security context. The operator's only opinionated default is
+`fsGroup: 1000`, which matches the UID baked into the official SonarQube
+image — without it, the data PVC ends up unreadable by the SonarQube
+process.
+
+When you supply your own `podSecurityContext`, the operator **keeps**
+`fsGroup: 1000` only if you didn't set `fsGroup` explicitly. Set
+`fsGroup` yourself to override.
+
+### `securityContext`
+
+| | |
+|---|---|
+| **Type** | `*corev1.SecurityContext` |
+| **Required** | no |
+
+Container-level security context applied to the SonarQube container
+**only**. Has no effect on the privileged `vm.max_map_count` init
+container — disable that one separately with `spec.skipSysctlInit`.
+
+Useful for satisfying Pod Security Admission `restricted` profile:
+
+```yaml
+securityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  capabilities:
+    drop: [ALL]
+  seccompProfile:
+    type: RuntimeDefault
+```
+
+### `monitoring`
+
+Configures a managed Prometheus `ServiceMonitor` (CRD provided by the
+Prometheus Operator) pointing at the operator's metrics endpoint. **Soft
+dependency**: if `monitoring.coreos.com/v1` is not installed in the
+cluster, the operator emits a `Degraded` condition rather than crashing.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `enabled` | bool | no | `false` | Create a ServiceMonitor for this instance. |
+| `scrapeInterval` | string | no | (Prometheus default) | Scrape interval, e.g. `30s`, `1m`. Validated by the regex `^[0-9]+(ms|s|m|h)$`. |
+| `labels` | `map[string]string` | no | `{}` | Labels added to the ServiceMonitor metadata. Used by Prometheus' `serviceMonitorSelector` to match. |
+
+The metrics surfaced are documented in [Reference → Metrics](../metrics.md).
+
+### `cluster`
+
+Configures SonarQube **Data Center Edition** (DCE) — multi-node topology
+for HA. Only valid when `edition: enterprise`; rejected at admission
+otherwise.
+
+| Field | Type | Required | Min | Description |
+|---|---|---|---|---|
+| `appNodes` | int32 | yes | 2 | Number of SonarQube application nodes. |
+| `searchNodes` | int32 | yes | 3 | Number of Elasticsearch search nodes. **Must be odd** (3, 5, 7…) so the cluster maintains quorum on a single node loss. CEL-validated at admission. |
+| `licenseSecretRef` | string | yes | — | Name of a Secret in the same namespace containing the DCE license under the key `license`. SonarQube DCE refuses to start without one. |
+
+!!! warning "Scaffold — single-StatefulSet rendering"
+    The `cluster` field is admission-validated today, but the operator
+    still renders a **single** StatefulSet. The two-StatefulSet
+    (app + search) DCE rendering is tracked as a follow-up. Setting
+    `cluster.*` will not yet give you HA — it just unlocks the field for
+    future use.
 
 ---
 

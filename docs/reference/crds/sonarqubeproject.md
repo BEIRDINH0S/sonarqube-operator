@@ -50,6 +50,35 @@ spec:
     enabled: true
     secretName: hello-world-ci-token   # default: <project-name>-ci-token
     expiresIn: 720h                    # optional, e.g. 30 days
+
+  # Optional. Project tags. Reconciled with set semantics — SonarQube's
+  # tag list is replaced by this list on each reconcile.
+  tags:
+    - backend
+    - python
+
+  # Optional. Project links shown on the project overview page.
+  # Operator only removes links it created (tracked via status.managedLinkNames).
+  links:
+    - name: Repository
+      url: https://github.com/myorg/hello-world
+    - name: CI
+      url: https://github.com/myorg/hello-world/actions
+
+  # Optional. Project-scoped sonar.* settings. Reserved auth keys
+  # (sonar.auth.*) are rejected at admission.
+  settings:
+    sonar.coverage.exclusions: "**/migrations/**,**/*.generated.go"
+    sonar.exclusions: "**/vendor/**"
+
+  # Optional. Project-scoped permission grants. Operator only ever removes
+  # grants it created (tracked via status.managedPermissions); permissions
+  # set through the SonarQube UI are left alone.
+  permissions:
+    - group: backend-team
+      permissions: [admin, codeviewer, scan]
+    - user: ci-bot
+      permissions: [scan]
 ```
 
 ---
@@ -184,6 +213,99 @@ will fail with `401 Unauthorized` and you must trigger a rotation
 manually (delete the Secret or set the annotation). See the
 [Token Rotation guide](../../how-to/token-rotation.md) for the workflow.
 
+### `tags`
+
+| | |
+|---|---|
+| **Type** | `[]string` |
+| **Required** | no |
+
+The full set of tags to apply to the project. **Set semantics, full
+ownership**: on each reconcile, SonarQube's tag list for this project is
+replaced by `spec.tags`. Tags added to the project through the UI will
+be removed on the next reconcile.
+
+If you need tags that the operator does *not* manage (e.g. tags applied
+by a separate tagging script), do not list any tags in `spec.tags` and
+manage them all out-of-band. The operator does not have a per-tag opt-out.
+
+### `links`
+
+| | |
+|---|---|
+| **Type** | `[]ProjectLink` |
+| **Required** | no |
+
+List of named URLs shown on the project's overview page. SonarQube infers
+the link *type* (`homepage`, `ci`, `issue`, `scm`, `scm_dev`, `other`)
+from the link **name** automatically — the create API does not take a
+type argument.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | yes | Link display name. Conventional names are auto-typed by SonarQube (e.g. `Homepage`, `CI`, `Issue Tracker`, `SCM`). |
+| `url` | string | yes | Link target URL. |
+
+The operator follows a "manage what I created" rule: only links whose
+names appear in `status.managedLinkNames` are removed when they leave
+the spec. Links added directly through the SonarQube UI stay untouched.
+
+### `settings`
+
+| | |
+|---|---|
+| **Type** | `map[string]string` |
+| **Required** | no |
+
+Project-scoped `sonar.*` properties. Each entry is propagated to
+`POST /api/settings/set?component=<key>`; entries removed from the spec
+that the operator previously owned (tracked in `status.managedSettings`)
+are reset via `POST /api/settings/reset`.
+
+A CEL rule rejects keys starting with `sonar.auth.` — those control
+instance-level authentication and have no business being managed
+per-project.
+
+Common values:
+
+| Key | Effect |
+|---|---|
+| `sonar.coverage.exclusions` | Glob list of files excluded from coverage reporting. |
+| `sonar.exclusions` | Glob list of files completely excluded from analysis. |
+| `sonar.cpd.exclusions` | Glob list of files excluded from duplication detection. |
+| `sonar.sources` | Source code roots (defaults to project root if unset). |
+
+### `permissions`
+
+| | |
+|---|---|
+| **Type** | `[]ProjectPermission` |
+| **Required** | no |
+
+Project-scoped permission grants. Each entry grants **a list of
+permissions** to **either a user or a group** (a CEL rule rejects entries
+that set both or neither).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `user` | string | conditional | SonarQube login. Mutually exclusive with `group`. |
+| `group` | string | conditional | SonarQube group name. Mutually exclusive with `user`. |
+| `permissions` | `[]string` | yes | Permissions to grant. **Min items: 1.** Valid values: `admin`, `codeviewer`, `issueadmin`, `securityhotspotadmin`, `scan`, `user`. |
+
+The operator follows the same "manage what I created" rule as `groups` on
+`SonarQubeUser`. Only grants that appear in `status.managedPermissions`
+(format: `<kind>:<subject>:<permission>`, e.g. `group:backend-team:admin`)
+are removed when they leave the spec. Grants added through the SonarQube
+UI or through a `SonarQubePermissionTemplate` apply are never touched.
+
+!!! note "Project permissions vs. permission templates"
+    Use `spec.permissions` for permanent, project-specific grants
+    (e.g. *the backend team always gets admin on this project*). Use a
+    `SonarQubePermissionTemplate` for grants applied automatically to a
+    *family* of projects whose key matches a pattern. The two coexist:
+    a project gets its template-applied grants on creation, and any
+    explicit `spec.permissions` on top of that.
+
 ---
 
 ## Status
@@ -215,6 +337,9 @@ status:
 |---|---|
 | `projectUrl` | Direct dashboard link to the project on the SonarQube UI. |
 | `tokenSecretRef` | Name of the Secret holding the CI token. Set when `ciToken.enabled: true`. |
+| `managedLinkNames` | Names of project links the operator created. Used to decide which links to remove when they leave `spec.links`. Never edit by hand. |
+| `managedSettings` | Setting keys the operator currently owns. Keys removed from `spec.settings` but still in this list are reset on the next reconcile. Never edit by hand. |
+| `managedPermissions` | Permission grants the operator currently owns, formatted as `user:<login>:<perm>` / `group:<name>:<perm>`. Grants no longer matching `spec.permissions` are revoked. Never edit by hand. |
 
 ---
 

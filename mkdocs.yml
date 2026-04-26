@@ -122,6 +122,11 @@ nav:
           - SonarQubeProject: reference/crds/sonarqubeproject.md
           - SonarQubeQualityGate: reference/crds/sonarqubequalitygate.md
           - SonarQubeUser: reference/crds/sonarqubeuser.md
+          - SonarQubeGroup: reference/crds/sonarqubegroup.md
+          - SonarQubePermissionTemplate: reference/crds/sonarqubepermissiontemplate.md
+          - SonarQubeWebhook: reference/crds/sonarqubewebhook.md
+          - SonarQubeBranchRule: reference/crds/sonarqubebranchrule.md
+          - SonarQubeBackup: reference/crds/sonarqubebackup.md
       - Helm Values: reference/helm-values.md
       - Metrics: reference/metrics.md
       - SonarQube API: reference/sonarqube-api.md
