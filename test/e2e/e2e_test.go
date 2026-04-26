@@ -371,24 +371,33 @@ spec:
 		})
 
 		AfterAll(func() {
-			By("deleting SonarQubeProject")
-			cmd := exec.Command("kubectl", "delete", "sonarqubeproject", "e2e-project",
-				"-n", testNS, "--ignore-not-found", "--timeout=60s")
-			_, _ = utils.Run(cmd)
+			By("deleting all SonarQube CRs from this suite (idempotent)")
+			for _, target := range []string{
+				"sonarqubewebhook/e2e-webhook",
+				"sonarqubepermissiontemplate/e2e-template",
+				"sonarqubeuser/e2e-user",
+				"sonarqubegroup/e2e-group",
+				"sonarqubeplugin/e2e-checkstyle",
+				"sonarqubebranchrule/e2e-branch",
+				"sonarqubebackup/e2e-backup",
+				"sonarqubeproject/e2e-project",
+				"sonarqubequalitygate/e2e-gate",
+				"sonarqubeinstance/" + instanceName,
+			} {
+				cmd := exec.Command("kubectl", "delete", target,
+					"-n", testNS, "--ignore-not-found", "--timeout=120s")
+				_, _ = utils.Run(cmd)
+			}
 
-			By("deleting SonarQubeQualityGate")
-			cmd = exec.Command("kubectl", "delete", "sonarqubequalitygate", "e2e-gate",
-				"-n", testNS, "--ignore-not-found", "--timeout=60s")
+			By("deleting scanner Pod, ConfigMap, and ad-hoc Secrets")
+			cmd := exec.Command("kubectl", "delete", "pod", "e2e-scanner",
+				"-n", testNS, "--ignore-not-found")
 			_, _ = utils.Run(cmd)
-
-			By("deleting SonarQubeInstance")
-			cmd = exec.Command("kubectl", "delete", "sonarqubeinstance", instanceName,
-				"-n", testNS, "--ignore-not-found", "--timeout=60s")
+			cmd = exec.Command("kubectl", "delete", "configmap", "e2e-scanner-src",
+				"-n", testNS, "--ignore-not-found")
 			_, _ = utils.Run(cmd)
-
-			By("deleting secrets")
 			cmd = exec.Command("kubectl", "delete", "secret",
-				"sonar-admin", "sonar-db-secret",
+				"sonar-admin", "sonar-db-secret", "e2e-user-password",
 				"-n", testNS, "--ignore-not-found")
 			_, _ = utils.Run(cmd)
 
@@ -492,8 +501,8 @@ spec:
 			Expect(condStatus).To(Equal("True"))
 		})
 
-		It("SonarQubeProject reaches Ready", func() {
-			By("creating SonarQubeProject")
+		It("SonarQubeProject reaches Ready and CI token Secret materialises", func() {
+			By("creating SonarQubeProject with ciToken enabled")
 			Expect(kubectlApply(fmt.Sprintf(`
 apiVersion: sonarqube.sonarqube.io/v1alpha1
 kind: SonarQubeProject
@@ -507,6 +516,9 @@ spec:
   name: E2E Test Project
   visibility: private
   qualityGateRef: e2e-gate
+  ciToken:
+    enabled: true
+    secretName: e2e-project-ci-token
 `, testNS, instanceName))).To(Succeed())
 
 			By("waiting for SonarQubeProject to be Ready")
@@ -532,20 +544,324 @@ spec:
 			condStatus, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(condStatus).To(Equal("True"))
+
+			By("verifying the CI token Secret was created with a non-empty token")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "secret", "e2e-project-ci-token",
+					"-n", testNS, "-o", "jsonpath={.data.token}")
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).NotTo(BeEmpty(), "ci token Secret data.token should be set")
+			}, 1*time.Minute, 2*time.Second).Should(Succeed())
+		})
+
+		It("SonarQubePlugin reaches Installed and Instance restarts back to Ready", func() {
+			By("creating SonarQubePlugin (checkstyle — small community plugin not bundled in 10.x)")
+			Expect(kubectlApply(fmt.Sprintf(`
+apiVersion: sonarqube.sonarqube.io/v1alpha1
+kind: SonarQubePlugin
+metadata:
+  name: e2e-checkstyle
+  namespace: %s
+spec:
+  instanceRef:
+    name: %s
+  key: checkstyle
+`, testNS, instanceName))).To(Succeed())
+
+			By("waiting for SonarQubePlugin to be Installed")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "sonarqubeplugin", "e2e-checkstyle",
+					"-n", testNS, "-o", "jsonpath={.status.phase}")
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("Installed"))
+			}, 3*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("waiting for the Instance to come back to Ready after the batched restart")
+			// The plugin install sets instance.status.restartRequired which the
+			// instance controller picks up, restarts SonarQube, then clears.
+			// Allow up to 5 min for ES + DB migrations to settle on the cold start.
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "sonarqubeinstance", instanceName,
+					"-n", testNS, "-o", "jsonpath={.status.phase}")
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("Ready"))
+			}, 5*time.Minute, 10*time.Second).Should(Succeed())
+
+			By("verifying restartRequired flag is cleared")
+			cmd := exec.Command("kubectl", "get", "sonarqubeinstance", instanceName,
+				"-n", testNS, "-o", "jsonpath={.status.restartRequired}")
+			out, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).NotTo(Equal("true"), "restartRequired should be cleared after restart")
+		})
+
+		It("SonarQubeGroup reaches Ready", func() {
+			Expect(kubectlApply(fmt.Sprintf(`
+apiVersion: sonarqube.sonarqube.io/v1alpha1
+kind: SonarQubeGroup
+metadata:
+  name: e2e-group
+  namespace: %s
+spec:
+  instanceRef:
+    name: %s
+  name: e2e-team
+  description: E2E test group
+`, testNS, instanceName))).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "sonarqubegroup", "e2e-group",
+					"-n", testNS, "-o", "jsonpath={.status.phase}")
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("Ready"))
+			}, 1*time.Minute, 2*time.Second).Should(Succeed())
+		})
+
+		It("SonarQubeUser reaches Ready and tokens Secret is created", func() {
+			By("creating the user password Secret")
+			Expect(kubectlCreateSecret(testNS, "e2e-user-password",
+				"password=E2EUserPwd!"+"123",
+			)).To(Succeed())
+
+			By("creating SonarQubeUser with a standalone token")
+			Expect(kubectlApply(fmt.Sprintf(`
+apiVersion: sonarqube.sonarqube.io/v1alpha1
+kind: SonarQubeUser
+metadata:
+  name: e2e-user
+  namespace: %s
+spec:
+  instanceRef:
+    name: %s
+  login: e2euser
+  name: E2E User
+  email: e2e@example.com
+  passwordSecretRef:
+    name: e2e-user-password
+  groups:
+    - e2e-team
+  tokens:
+    - name: e2e-token
+      secretName: e2e-user-token
+      type: USER_TOKEN
+`, testNS, instanceName))).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "sonarqubeuser", "e2e-user",
+					"-n", testNS, "-o", "jsonpath={.status.phase}")
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("Ready"))
+			}, 2*time.Minute, 2*time.Second).Should(Succeed())
+
+			By("verifying the standalone token Secret was created")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "secret", "e2e-user-token",
+					"-n", testNS, "-o", "jsonpath={.data.token}")
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).NotTo(BeEmpty())
+			}, 1*time.Minute, 2*time.Second).Should(Succeed())
+		})
+
+		It("SonarQubePermissionTemplate reaches Ready", func() {
+			Expect(kubectlApply(fmt.Sprintf(`
+apiVersion: sonarqube.sonarqube.io/v1alpha1
+kind: SonarQubePermissionTemplate
+metadata:
+  name: e2e-template
+  namespace: %s
+spec:
+  instanceRef:
+    name: %s
+  name: e2e-template
+  description: E2E test permission template
+  projectKeyPattern: "e2e\\..*"
+`, testNS, instanceName))).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "sonarqubepermissiontemplate", "e2e-template",
+					"-n", testNS, "-o", "jsonpath={.status.phase}")
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("Ready"))
+			}, 1*time.Minute, 2*time.Second).Should(Succeed())
+		})
+
+		It("SonarQubeWebhook reaches Ready", func() {
+			Expect(kubectlApply(fmt.Sprintf(`
+apiVersion: sonarqube.sonarqube.io/v1alpha1
+kind: SonarQubeWebhook
+metadata:
+  name: e2e-webhook
+  namespace: %s
+spec:
+  instanceRef:
+    name: %s
+  name: e2e-webhook
+  url: http://example.com/webhook
+  projectKey: e2e-project
+`, testNS, instanceName))).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "sonarqubewebhook", "e2e-webhook",
+					"-n", testNS, "-o", "jsonpath={.status.phase}")
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("Ready"))
+			}, 1*time.Minute, 2*time.Second).Should(Succeed())
+		})
+
+		It("SonarQubeBranchRule and SonarQubeBackup admit and report scaffold-only status", func() {
+			By("creating a SonarQubeBranchRule")
+			Expect(kubectlApply(fmt.Sprintf(`
+apiVersion: sonarqube.sonarqube.io/v1alpha1
+kind: SonarQubeBranchRule
+metadata:
+  name: e2e-branch
+  namespace: %s
+spec:
+  instanceRef:
+    name: %s
+  projectKey: e2e-project
+  branch: main
+  newCodePeriod:
+    mode: previous_version
+`, testNS, instanceName))).To(Succeed())
+
+			By("creating a SonarQubeBackup")
+			Expect(kubectlApply(fmt.Sprintf(`
+apiVersion: sonarqube.sonarqube.io/v1alpha1
+kind: SonarQubeBackup
+metadata:
+  name: e2e-backup
+  namespace: %s
+spec:
+  instanceRef:
+    name: %s
+  schedule: "0 2 * * *"
+  destination:
+    pvc:
+      claimName: e2e-backup-pvc
+`, testNS, instanceName))).To(Succeed())
+
+			By("waiting for both to surface NotImplementedYet on the Ready condition")
+			for _, kind := range []string{"sonarqubebranchrule/e2e-branch", "sonarqubebackup/e2e-backup"} {
+				k := kind
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", k,
+						"-n", testNS,
+						"-o", `jsonpath={.status.conditions[?(@.type=="Ready")].reason}`)
+					out, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(out).To(Equal("NotImplementedYet"))
+				}, 1*time.Minute, 2*time.Second).Should(Succeed())
+			}
+		})
+
+		It("sonar-scanner Pod runs against the Instance using the CI token", func() {
+			By("creating a ConfigMap with a tiny source tree and sonar-project.properties")
+			Expect(kubectlApply(fmt.Sprintf(`
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: e2e-scanner-src
+  namespace: %s
+data:
+  sonar-project.properties: |
+    sonar.projectKey=e2e-project
+    sonar.projectName=E2E Test Project
+    sonar.sources=.
+    sonar.inclusions=Hello.java
+    sonar.java.binaries=.
+  Hello.java: |
+    public class Hello {
+        public static void main(String[] args) {
+            System.out.println("Hello, e2e");
+        }
+    }
+`, testNS))).To(Succeed())
+
+			By("running sonar-scanner against the operator-managed Instance")
+			Expect(kubectlApply(fmt.Sprintf(`
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-scanner
+  namespace: %s
+spec:
+  restartPolicy: Never
+  containers:
+  - name: scanner
+    image: sonarsource/sonar-scanner-cli:latest
+    workingDir: /usr/src
+    env:
+    - name: SONAR_HOST_URL
+      value: http://%s.%s.svc:9000
+    - name: SONAR_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: e2e-project-ci-token
+          key: token
+    volumeMounts:
+    - name: src
+      mountPath: /usr/src
+  volumes:
+  - name: src
+    configMap:
+      name: e2e-scanner-src
+`, testNS, instanceName, testNS))).To(Succeed())
+
+			By("waiting for the scanner Pod to Succeed (analysis upload completed)")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pod", "e2e-scanner",
+					"-n", testNS, "-o", "jsonpath={.status.phase}")
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("Succeeded"))
+			}, 5*time.Minute, 10*time.Second).Should(Succeed())
+
+			By("verifying the scanner reported EXECUTION SUCCESS in its logs")
+			cmd := exec.Command("kubectl", "logs", "e2e-scanner", "-n", testNS)
+			logs, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(logs).To(ContainSubstring("EXECUTION SUCCESS"),
+				"scanner should report EXECUTION SUCCESS — full logs above")
 		})
 
 		It("deletion removes resources from SonarQube via finalizers", func() {
-			By("deleting SonarQubeProject and waiting for it to be gone")
-			cmd := exec.Command("kubectl", "delete", "sonarqubeproject", "e2e-project",
-				"-n", testNS, "--timeout=60s")
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
+			By("deleting the Quick Start CRs in dependency order")
+			for _, target := range []string{
+				"sonarqubewebhook/e2e-webhook",
+				"sonarqubepermissiontemplate/e2e-template",
+				"sonarqubeuser/e2e-user",
+				"sonarqubegroup/e2e-group",
+				"sonarqubeplugin/e2e-checkstyle",
+				"sonarqubebranchrule/e2e-branch",
+				"sonarqubebackup/e2e-backup",
+				"sonarqubeproject/e2e-project",
+				"sonarqubequalitygate/e2e-gate",
+			} {
+				cmd := exec.Command("kubectl", "delete", target,
+					"-n", testNS, "--ignore-not-found", "--timeout=120s")
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "deleting %s", target)
+			}
 
-			By("deleting SonarQubeQualityGate and waiting for it to be gone")
-			cmd = exec.Command("kubectl", "delete", "sonarqubequalitygate", "e2e-gate",
-				"-n", testNS, "--timeout=60s")
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
+			By("cleaning up scanner Pod and ConfigMap")
+			cmd := exec.Command("kubectl", "delete", "pod", "e2e-scanner",
+				"-n", testNS, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "delete", "configmap", "e2e-scanner-src",
+				"-n", testNS, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "delete", "secret", "e2e-user-password",
+				"-n", testNS, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
 		})
 	})
 })
