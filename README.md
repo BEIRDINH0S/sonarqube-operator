@@ -7,8 +7,9 @@
 
 A Kubernetes operator that manages the full lifecycle of SonarQube and its
 configuration as code. Stop clicking through the SonarQube UI — declare your
-instances, plugins, projects, quality gates and users as Kubernetes resources,
-and let the operator keep them in sync.
+instances, plugins, projects, quality gates, users, groups, permission
+templates, webhooks, branch rules, and backups as Kubernetes resources, and
+let the operator keep them in sync.
 
 ## Description
 
@@ -37,10 +38,23 @@ webhooks, Prometheus metrics, and rate-limited reconciliation. Everything
 is reconciled continuously: change a CR, the operator drives the SonarQube
 API.
 
+### Status conditions
+
+Every CR exposes a `Ready` condition; some controllers expose extras you
+can target from `kubectl wait` or Argo CD health checks:
+
+| Condition | On | What it means |
+|---|---|---|
+| `Ready` | All CRDs | The CR matches the SonarQube state. |
+| `AdminInitialized` | `SonarQubeInstance` | Admin password rotated and Bearer token Secret created. |
+| `Degraded` | `SonarQubeInstance` | A scaffold-only spec field (`spec.cluster`, `spec.monitoring`) is set but not yet reconciled — message lists which. |
+| `Installed` | `SonarQubePlugin` | Plugin install succeeded; restart cycle complete. |
+| `MainBranchSynced` | `SonarQubeProject` | `spec.mainBranch` matches SonarQube; reports fetch/rename failures with a specific reason. |
+
 For a hands-on tour see the
 [GitOps example repo](https://github.com/BEIRDINH0S/sonarqube-operator-gitops-example),
-which provisions a complete SonarQube setup — instance, plugins, project,
-quality gate, user — from a single Argo CD Application.
+which provisions a complete SonarQube setup — every one of the ten CRDs
+above — from a single Argo CD Application.
 
 📖 **Full documentation:** <https://beirdinh0s.github.io/sonarqube-operator/>
 
@@ -82,6 +96,35 @@ kubectl apply -k config/samples/
 Then walk through the
 [Quick Start](https://beirdinh0s.github.io/sonarqube-operator/getting-started/quick-start/)
 to see what the operator did with them.
+
+### Optional: validating webhook
+
+The operator ships an opt-in validating webhook that catches a few
+classes of mistake at admission time (e.g. `spec.cluster` on a non-Enterprise
+edition, version downgrades). Disabled by default to keep the install
+zero-dependency.
+
+Enable it via Helm:
+
+```sh
+helm install sonarqube-operator \
+  oci://ghcr.io/beirdinh0s/sonarqube-operator \
+  --version 0.5.0 \
+  --namespace sonarqube-operator-system --create-namespace \
+  --set webhook.enabled=true
+```
+
+Requires [cert-manager](https://cert-manager.io) in the cluster; the chart
+provisions a self-signed Issuer + Certificate by default. Override the
+listening port with `--set webhook.port=...` if 9443 conflicts with another
+controller (the manager picks the same value up via `--webhook-port`).
+
+### Logging
+
+The manager logs in JSON format by default — fine for production
+aggregators (Loki, Datadog). For local development, pass `--zap-devel`
+(or `--set extraArgs={--zap-devel}` on the chart) to get the
+human-readable console encoder.
 
 ### Uninstall
 
