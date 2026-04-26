@@ -5,11 +5,13 @@ where it is going. For the full per-CRD task list, see the
 [GitHub issues](https://github.com/BEIRDINH0S/sonarqube-operator/issues)
 and the [Releases page](https://github.com/BEIRDINH0S/sonarqube-operator/releases).
 
-> **Current status**: late beta. Ten CRDs ship — eight with full
-> reconcile loops, two (`SonarQubeBranchRule`, `SonarQubeBackup`) as
-> admission-only scaffolds. The API is in `v1alpha1` and may change
-> before `v1.0.0` — see the changelog for migration notes between
-> releases.
+> **Current status**: `v0.5.0` shipped — first stable line. Ten CRDs ship,
+> eight with full reconcile loops, two (`SonarQubeBranchRule`,
+> `SonarQubeBackup`) as admission-only scaffolds. The API is still in
+> `v1alpha1` and may break in the `v1beta1` promotion that precedes
+> `v1.0.0`; conversion webhooks will be introduced at that point so users
+> on `v1alpha1` get a clean upgrade path. See the changelog for migration
+> notes between releases.
 
 ---
 
@@ -34,74 +36,94 @@ and the [Releases page](https://github.com/BEIRDINH0S/sonarqube-operator/release
   with managed-set ownership tracking.
 - **Production hardening** — leader election, validating webhook
   (opt-in), Prometheus metrics, rate-limited reconcile, batched
-  SonarQube restarts on plugin install/uninstall.
+  SonarQube restarts on plugin install/uninstall, JSON-structured logs
+  by default, webhook port plumbed through the chart, CI-token churn
+  fix, project main-branch sync surfaced as a status condition.
+- **Multi-tenancy** — opt-in cross-namespace `instanceRef` allowlist
+  with a validating webhook, RBAC namespaced mode that scopes the
+  operator to a list of namespaces, documented threat model.
 - **Packaging** — multi-arch image (amd64+arm64) on GHCR with SBOM and
   SLSA provenance, Helm chart published as OCI artifact, single-file
   `install.yaml` for `kubectl apply`, GitOps-friendly (Argo CD / Flux
   examples in the docs).
+- **Quality gates** — `golangci-lint` clean, 60% coverage floor enforced
+  in CI, end-to-end suite covering the full Quick Start including a
+  real `sonar-scanner` analysis against the operator-managed instance.
 - **Documentation** — full MkDocs site at
   [beirdinh0s.github.io/sonarqube-operator](https://beirdinh0s.github.io/sonarqube-operator/)
   covering Getting Started, How-To, Reference (per CRD + Helm values +
   metrics), Operations, and Contributing.
+- **Governance** — `LICENSE` (Apache 2.0), `SECURITY.md`, `SUPPORT.md`,
+  `CODE_OF_CONDUCT.md`, `CODEOWNERS`.
 
 ---
 
-## In flight (toward `v0.5.0` stable)
+## In flight (toward `v1.0.0`)
 
-- **Hardening fixes** identified during code review and first cluster
-  validation:
-  - P0 (release-blocking): chart image lowercase ✅, finalizer-deletion
-    ordering ✅, child controllers using `Status.URL` ✅. All shipped
-    in commits leading up to `v0.5.0-rc.3`.
-  - P1: webhook port plumbing, multi-tenancy threat model, CI token
-    churn risk on `Update` failure.
-  - P2/P3: README polish, structured logs by default, Go version
-    consistency, RBAC scoping, lint/test coverage thresholds.
-- **User validation on a real cluster** — running through the Quick
-  Start end-to-end on a non-CI cluster, with a real `sonar-scanner`
-  analysis. The first iteration already turned up the `Status.URL` bug.
+The work between `v0.5.0` and `v1.0.0` is grouped into four tracks. They
+move in parallel; nothing here strictly depends on anything else except
+where called out.
 
-When all P0+P1 items and validation are green, we cut `v0.5.0` stable.
+### API stabilization
 
----
+- Promote `v1alpha1` → `v1beta1` with a final field-by-field audit
+  before the schema gets harder to change.
+- Wire conversion webhooks (kubebuilder hub-and-spoke, `v1beta1` as the
+  hub) so existing `v1alpha1` resources keep working through the cut.
+- Publish a deprecation policy: minimum support window for a stored
+  version, how breaking changes get announced, when fields can be
+  removed.
+- Once `v1beta1` has soaked, promote to `v1` and freeze the schema.
 
-## Coming next (toward `v1.0.0`)
+### Surface completeness
 
-- **API stabilization** — promote `v1alpha1` to `v1beta1` and then `v1`,
-  with conversion webhooks and a public deprecation policy.
-- **OperatorHub.io listing** — package as an OLM bundle and submit a PR
-  to the `community-operators` repo.
-- **Artifact Hub indexing** for the Helm chart.
-- **Supply-chain hardening** — Cosign signing of release artifacts,
-  `SECURITY.md`, OpenSSF Scorecard.
-- **Cross-version K8s testing** — CI matrix across the supported
-  Kubernetes minors (currently 1.27+).
-- **Community & governance** — `CODE_OF_CONDUCT.md`, `SUPPORT.md`,
-  issue/PR templates, `CODEOWNERS`, GitHub Discussions.
+- Decide on the two scaffold CRDs (`SonarQubeBranchRule`,
+  `SonarQubeBackup`) before `v1.0.0`: either implement the reconcile
+  pipelines, or remove them from the documented surface and ship them
+  in a later minor. A "stable v1.0" that is 20% admission-only is not
+  the right story.
+- Two-StatefulSet DCE rendering driven by `spec.cluster` (Instance).
+- Webhook drift correction (delete + recreate when URL or HMAC secret
+  diverges).
 
-`v1.0.0` is published once these pieces land and the project has been
-running in production with at least a handful of external users.
+### Distribution & supply chain
+
+- Cosign signing of `install.yaml`, the Helm chart OCI artifact, and
+  the GHCR image.
+- [Artifact Hub](https://artifacthub.io/) indexing for the Helm chart.
+- [OperatorHub.io](https://operatorhub.io/) listing as an OLM bundle
+  (`operator-sdk generate bundle`, PR to
+  `k8s-operatorhub/community-operators`).
+- OpenSSF Scorecard workflow + badge on the README.
+- CI matrix across the supported Kubernetes minors.
+
+### Validation
+
+- Real-cluster validation by external users — at least a handful of
+  independent operators running through the Quick Start and reporting
+  back. Bug reports from real environments are the only way to find
+  out what is genuinely broken before the API freezes.
+
+`v1.0.0` is published once these tracks land and the project has been
+running without regressions on `v1beta1` for at least one minor cycle.
 
 ---
 
 ## Beyond `v1.0.0` (nice-to-have)
 
-- OpenTelemetry tracing through the Reconcile loop
-- OpenShift-specific testing and SCC packaging
-- Mutation / fuzz / soak testing
-- **Reconcile pipelines for the scaffold CRDs**:
+- OpenTelemetry tracing through the Reconcile loop.
+- OpenShift-specific testing and SCC packaging.
+- Mutation / fuzz / soak testing.
+- **Reconcile pipelines for the scaffold CRDs** if they were not
+  shipped with `v1.0.0`:
   - `SonarQubeBranchRule` — actual calls to `/api/new_code_periods/set`,
     `/api/qualitygates/select`, `/api/settings/set` scoped to a branch.
   - `SonarQubeBackup` — materialize a `CronJob` running `pg_dump` +
     extensions snapshot, ship to PVC/S3, retention pruning.
-- **Instance** — true two-StatefulSet (app + search) DCE rendering
-  driven by `spec.cluster`.
 - **Permission templates** — surface `spec.permissions[]` on
   `SonarQubePermissionTemplate` so template grants can be declared as
   code (today they are managed in the SonarQube UI even when the
   template itself is operator-managed).
-- **Webhook drift correction** — delete + re-create when URL or HMAC
-  secret diverges from the spec.
 - A `SonarQubeRestore` CRD orchestrating the inverse of
   `SonarQubeBackup`.
 
