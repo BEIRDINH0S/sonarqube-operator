@@ -409,11 +409,17 @@ func (r *SonarQubeUserReconciler) reconcileUserTokens(ctx context.Context, user 
 
 // reconcileUserGlobalPermissions diffs spec.globalPermissions against
 // status.managedGlobalPermissions and adds/removes only the grants the
-// operator owns.
+// operator owns. Permissions already tracked in status are skipped on the
+// add path so we don't re-grant them on every reconcile (some SonarQube
+// versions return an error when re-granting an existing permission).
 func (r *SonarQubeUserReconciler) reconcileUserGlobalPermissions(ctx context.Context, user *sonarqubev1alpha1.SonarQubeUser, sonarClient sonarqube.Client) error {
 	desired := make(map[string]bool, len(user.Spec.GlobalPermissions))
 	for _, p := range user.Spec.GlobalPermissions {
 		desired[p] = true
+	}
+	managed := make(map[string]bool, len(user.Status.ManagedGlobalPermissions))
+	for _, p := range user.Status.ManagedGlobalPermissions {
+		managed[p] = true
 	}
 
 	for _, p := range user.Status.ManagedGlobalPermissions {
@@ -426,6 +432,9 @@ func (r *SonarQubeUserReconciler) reconcileUserGlobalPermissions(ctx context.Con
 	}
 
 	for _, p := range user.Spec.GlobalPermissions {
+		if managed[p] {
+			continue
+		}
 		if err := sonarClient.AddUserGlobalPermission(ctx, user.Spec.Login, p); err != nil {
 			return fmt.Errorf("granting global permission %q: %w", p, err)
 		}
@@ -444,6 +453,10 @@ func (r *SonarQubeUserReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			),
 		}).
 		For(&sonarqubev1alpha1.SonarQubeUser{}).
+		// Owns the user-token Secrets created by reconcileUserTokens. Without
+		// this, manually deleting a token Secret to force regeneration only
+		// takes effect at the next periodic resync (default 10h).
+		Owns(&corev1.Secret{}).
 		Named("sonarqubeuser").
 		Complete(r)
 }
