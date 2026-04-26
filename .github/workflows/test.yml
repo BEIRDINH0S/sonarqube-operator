@@ -21,3 +21,17 @@ jobs:
         run: |
           go mod tidy
           make test
+
+      - name: Check coverage threshold
+        run: make check-coverage
+
+      - name: Annotate workflow summary with coverage
+        if: always()
+        run: |
+          if [ -f cover.out ]; then
+            grep -vE '/zz_generated|cmd/main\.go|test/utils' cover.out > cover.filtered.out
+            total=$(go tool cover -func=cover.filtered.out | awk '/^total/ { sub("%","",$3); print $3 }')
+            echo "## Coverage: ${total}%" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Threshold: 60% (set via COVERAGE_THRESHOLD in the Makefile)" >> "$GITHUB_STEP_SUMMARY"
+          fi
