@@ -64,6 +64,11 @@ const (
 	conditionReady            = "Ready"
 	conditionAdminInitialized = "AdminInitialized"
 	conditionInstalled        = "Installed"
+	// conditionDegraded surfaces partial-functionality states that are not
+	// outright failures (e.g. scaffold-only spec fields accepted but not yet
+	// reconciled). Mirrors the convention from k8s.io/apimachinery condition
+	// types.
+	conditionDegraded = "Degraded"
 
 	// phaseReady and its siblings are values for Status.Phase fields.
 	// Kept separate from conditionReady to avoid silent breakage if the condition

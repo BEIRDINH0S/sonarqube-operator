@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -89,13 +90,7 @@ func (r *SonarQubeInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	log.Info("Reconciling", "name", instance.Name, "phase", instance.Status.Phase)
 
-	if instance.Spec.Cluster != nil {
-		// Scaffold: DCE topology is recorded but the operator still renders
-		// the single-pod StatefulSet below. The follow-up will switch to
-		// two StatefulSets (app + search) when spec.cluster is set.
-		r.Recorder.Event(instance, corev1.EventTypeWarning, "DCENotImplementedYet",
-			"spec.cluster is accepted but DCE rendering is not wired up yet — see issue #11. Single-node deploy is used.")
-	}
+	r.surfaceScaffoldDegraded(instance)
 
 	if err := r.reconcileStatefulSet(ctx, instance); err != nil {
 		r.Recorder.Event(instance, corev1.EventTypeWarning, "StatefulSetFailed", err.Error())
@@ -117,15 +112,6 @@ func (r *SonarQubeInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, fmt.Errorf("reconciling Ingress: %w", err)
 	}
 
-	if instance.Spec.Monitoring.Enabled {
-		// Scaffold: the actual ServiceMonitor reconciliation has a soft
-		// dependency on monitoring.coreos.com/v1 and will land as a
-		// follow-up. We surface a Warning event so the user knows their
-		// monitoring config is recorded but not yet applied.
-		r.Recorder.Event(instance, corev1.EventTypeWarning, "MonitoringNotImplementedYet",
-			"spec.monitoring.enabled is accepted but the ServiceMonitor reconciler is not wired up yet — see issue #10")
-	}
-
 	serviceURL := instanceAPIURL(instance)
 	result := r.reconcileHealth(ctx, instance, serviceURL)
 
@@ -145,6 +131,42 @@ func (r *SonarQubeInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	return result, nil
+}
+
+// surfaceScaffoldDegraded sets a persistent Degraded condition listing the
+// scaffold-only spec fields the user has enabled. Without this, users only see
+// a fleeting Warning event at reconcile time and have no programmatic signal
+// that their config is accepted but not actually applied.
+func (r *SonarQubeInstanceReconciler) surfaceScaffoldDegraded(instance *sonarqubev1alpha1.SonarQubeInstance) {
+	var reasons []string
+	if instance.Spec.Cluster != nil {
+		reasons = append(reasons, "spec.cluster (DCE rendering not implemented — single-node deploy used)")
+		r.Recorder.Event(instance, corev1.EventTypeWarning, "DCENotImplementedYet",
+			"spec.cluster is accepted but DCE rendering is not wired up yet — see issue #11")
+	}
+	if instance.Spec.Monitoring.Enabled {
+		reasons = append(reasons, "spec.monitoring.enabled (ServiceMonitor reconciler not implemented)")
+		r.Recorder.Event(instance, corev1.EventTypeWarning, "MonitoringNotImplementedYet",
+			"spec.monitoring.enabled is accepted but the ServiceMonitor reconciler is not wired up yet — see issue #10")
+	}
+
+	if len(reasons) == 0 {
+		apimeta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+			Type:               conditionDegraded,
+			Status:             metav1.ConditionFalse,
+			Reason:             "AllFeaturesImplemented",
+			Message:            "No scaffold-only spec fields are enabled",
+			ObservedGeneration: instance.Generation,
+		})
+		return
+	}
+	apimeta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+		Type:               conditionDegraded,
+		Status:             metav1.ConditionTrue,
+		Reason:             "ScaffoldOnlyFieldsEnabled",
+		Message:            "These spec fields are accepted but not yet reconciled: " + strings.Join(reasons, "; "),
+		ObservedGeneration: instance.Generation,
+	})
 }
 
 // reconcileHealth checks SonarQube health and handles the initial startup.
