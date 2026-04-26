@@ -64,6 +64,33 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
+# Minimum total coverage that `make check-coverage` enforces. Computed
+# against cover.out with auto-generated DeepCopy, the cmd/ entrypoint, and
+# test helpers excluded — these are the same exclusions
+# sonar-project.properties uses, so the local gate stays in sync with
+# whatever the CI scanner reports. Bump this when actual coverage rises so
+# regressions are caught.
+COVERAGE_THRESHOLD ?= 60
+
+.PHONY: check-coverage
+check-coverage: ## Fail when total coverage of cover.out drops below COVERAGE_THRESHOLD. Run `make test` first.
+	@if [ ! -f cover.out ]; then \
+		echo "::error::cover.out not found — run \`make test\` first"; \
+		exit 1; \
+	fi
+	@grep -vE '/zz_generated|cmd/main\.go|test/utils' cover.out > cover.filtered.out
+	@total=$$(go tool cover -func=cover.filtered.out | awk '/^total/ { sub("%","",$$3); print $$3 }'); \
+		echo "Coverage: $${total}% (threshold $(COVERAGE_THRESHOLD)%)"; \
+		awk -v t="$$total" -v th="$(COVERAGE_THRESHOLD)" 'BEGIN { exit (t+0 < th+0) }' || { \
+			echo "::error::coverage $${total}% is below threshold $(COVERAGE_THRESHOLD)%"; \
+			rm -f cover.filtered.out; \
+			exit 1; \
+		}
+	@rm -f cover.filtered.out
+
+.PHONY: coverage
+coverage: test check-coverage ## Convenience: run tests then check the threshold.
+
 # E2E setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # CertManager is installed by default; skip with CERT_MANAGER_INSTALL_SKIP=true.
 KIND_CLUSTER ?= sonarqube-operator-test-e2e
