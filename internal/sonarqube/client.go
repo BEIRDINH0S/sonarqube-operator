@@ -197,6 +197,13 @@ type Client interface {
 	// SetDefaultPermissionTemplate marks the named template as default.
 	SetDefaultPermissionTemplate(ctx context.Context, name string) error
 
+	// Webhooks
+	// CreateWebhook creates a webhook and returns its SonarQube-assigned key.
+	// projectKey is optional (empty = global webhook).
+	CreateWebhook(ctx context.Context, name, webhookURL, projectKey, secret string) (string, error)
+	// DeleteWebhook removes a webhook by key.
+	DeleteWebhook(ctx context.Context, key string) error
+
 	// Users
 	GetUser(ctx context.Context, login string) (*User, error)
 	CreateUser(ctx context.Context, login, name, email, password string) error
@@ -909,6 +916,41 @@ func (c *httpClient) DeletePermissionTemplate(ctx context.Context, id string) er
 
 func (c *httpClient) SetDefaultPermissionTemplate(ctx context.Context, name string) error {
 	_, err := c.do(ctx, http.MethodPost, "/api/permissions/set_default_template", url.Values{"templateName": {name}})
+	return err
+}
+
+// --- Webhooks ---
+
+type webhookCreateResponse struct {
+	Webhook struct {
+		Key string `json:"key"`
+	} `json:"webhook"`
+}
+
+func (c *httpClient) CreateWebhook(ctx context.Context, name, webhookURL, projectKey, secret string) (string, error) {
+	params := url.Values{
+		"name": {name},
+		"url":  {webhookURL},
+	}
+	if projectKey != "" {
+		params.Set("project", projectKey)
+	}
+	if secret != "" {
+		params.Set("secret", secret)
+	}
+	body, err := c.do(ctx, http.MethodPost, "/api/webhooks/create", params)
+	if err != nil {
+		return "", err
+	}
+	var result webhookCreateResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", err
+	}
+	return result.Webhook.Key, nil
+}
+
+func (c *httpClient) DeleteWebhook(ctx context.Context, key string) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/webhooks/delete", url.Values{"webhook": {key}})
 	return err
 }
 
