@@ -6,9 +6,29 @@ on:
 
 jobs:
   test-e2e:
-    name: Run on Ubuntu
+    name: Run on K8s ${{ matrix.k8s }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        # kindest/node digests are pinned per kind release; bump the kind
+        # version below in lock-step when refreshing this matrix. See
+        # https://github.com/kubernetes-sigs/kind/releases.
+        k8s:
+          - "1.28"
+          - "1.29"
+          - "1.30"
+          - "1.31"
+        include:
+          - k8s: "1.28"
+            node-image: "kindest/node:v1.28.15"
+          - k8s: "1.29"
+            node-image: "kindest/node:v1.29.10"
+          - k8s: "1.30"
+            node-image: "kindest/node:v1.30.6"
+          - k8s: "1.31"
+            node-image: "kindest/node:v1.31.2"
 
     steps:
       - name: Checkout
@@ -22,7 +42,8 @@ jobs:
 
       - name: Install Kind
         run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-$(go env GOARCH)
+          KIND_VERSION=v0.25.0
+          curl -Lo ./kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-$(go env GOARCH)"
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
 
@@ -30,6 +51,8 @@ jobs:
         run: kind version
 
       - name: Run e2e tests
+        env:
+          KIND_NODE_IMAGE: ${{ matrix.node-image }}
         run: |
           go mod tidy
           make test-e2e
@@ -37,6 +60,8 @@ jobs:
       - name: Collect debug info on failure
         if: failure()
         run: |
+          echo "=== K8s version ==="
+          kubectl version || true
           echo "=== All pods ==="
           kubectl get pods -A || true
           echo "=== Operator logs ==="

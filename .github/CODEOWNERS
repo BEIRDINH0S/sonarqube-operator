@@ -1,0 +1,8 @@
+# Code owners for the SonarQube Operator.
+#
+# The owner is automatically requested for review on every pull request
+# touching a matching path. See:
+# https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything in the repo.
+*       @BEIRDINH0S
